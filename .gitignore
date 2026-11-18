@@ -1,0 +1,22 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+.pytest_cache/
+.ruff_cache/
+
+# Local fetched datasets, model weights, and API caches (never commit non-redistributable data)
+data/
+*.sqlite
+*.db
+*.hdf5
+*.h5
+*.7z
+*.parquet
+*.smi.gz
+*.sdf.gz

@@ -1,0 +1,251 @@
+{
+  "$defs": {
+    "Quantity": {
+      "additionalProperties": false,
+      "properties": {
+        "raw_unit_str": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Raw Unit Str"
+        },
+        "uncertainty": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Uncertainty"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "unit": {
+          "default": "1",
+          "title": "Unit",
+          "type": "string"
+        },
+        "value": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Value"
+        }
+      },
+      "title": "Quantity",
+      "type": "object"
+    },
+    "RouteStep": {
+      "additionalProperties": false,
+      "properties": {
+        "product": {
+          "title": "Product",
+          "type": "string"
+        },
+        "reactants": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Reactants",
+          "type": "array"
+        },
+        "reaction_smiles": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Reaction Smiles"
+        },
+        "source": {
+          "title": "Source",
+          "type": "string"
+        },
+        "template_or_reference": {
+          "title": "Template Or Reference",
+          "type": "string"
+        }
+      },
+      "required": [
+        "product",
+        "reactants",
+        "template_or_reference",
+        "source"
+      ],
+      "title": "RouteStep",
+      "type": "object"
+    },
+    "Uncertainty": {
+      "additionalProperties": false,
+      "properties": {
+        "high": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "High"
+        },
+        "kind": {
+          "default": "none",
+          "enum": [
+            "std",
+            "interval",
+            "none"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "low": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Low"
+        },
+        "method": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Method"
+        },
+        "n": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "N"
+        },
+        "std": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Std"
+        }
+      },
+      "title": "Uncertainty",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "est_cost": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Quantity"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "est_cost_complete": {
+      "title": "Est Cost Complete",
+      "type": "boolean"
+    },
+    "est_cost_method": {
+      "title": "Est Cost Method",
+      "type": "string"
+    },
+    "leaves": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Leaves",
+      "type": "array"
+    },
+    "leaves_purchasable": {
+      "items": {
+        "type": "boolean"
+      },
+      "title": "Leaves Purchasable",
+      "type": "array"
+    },
+    "method": {
+      "title": "Method",
+      "type": "string"
+    },
+    "n_steps": {
+      "title": "N Steps",
+      "type": "integer"
+    },
+    "score": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Score"
+    },
+    "steps": {
+      "items": {
+        "$ref": "#/$defs/RouteStep"
+      },
+      "title": "Steps",
+      "type": "array"
+    },
+    "target_inchikey": {
+      "title": "Target Inchikey",
+      "type": "string"
+    }
+  },
+  "required": [
+    "target_inchikey",
+    "n_steps",
+    "steps",
+    "leaves",
+    "leaves_purchasable",
+    "method",
+    "est_cost_method",
+    "est_cost_complete"
+  ],
+  "title": "Route",
+  "type": "object"
+}

@@ -1,0 +1,140 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "access": {
+      "enum": [
+        "api",
+        "download",
+        "huggingface",
+        "github",
+        "builtin"
+      ],
+      "title": "Access",
+      "type": "string"
+    },
+    "attribution": {
+      "title": "Attribution",
+      "type": "string"
+    },
+    "commercial_use_ok": {
+      "title": "Commercial Use Ok",
+      "type": "boolean"
+    },
+    "homepage": {
+      "title": "Homepage",
+      "type": "string"
+    },
+    "id": {
+      "pattern": "^[a-z0-9_]+$",
+      "title": "Id",
+      "type": "string"
+    },
+    "kinds": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Kinds",
+      "type": "array"
+    },
+    "license": {
+      "title": "License",
+      "type": "string"
+    },
+    "license_checked": {
+      "title": "License Checked",
+      "type": "string"
+    },
+    "license_evidence": {
+      "title": "License Evidence",
+      "type": "string"
+    },
+    "license_quote": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "License Quote"
+    },
+    "license_url": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "License Url"
+    },
+    "modalities": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Modalities",
+      "type": "array"
+    },
+    "name": {
+      "title": "Name",
+      "type": "string"
+    },
+    "notes": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Notes"
+    },
+    "redistribution_ok": {
+      "title": "Redistribution Ok",
+      "type": "boolean"
+    },
+    "size_full": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Size Full"
+    },
+    "status": {
+      "default": "integrated",
+      "enum": [
+        "integrated",
+        "fetch_only",
+        "not_used",
+        "planned"
+      ],
+      "title": "Status",
+      "type": "string"
+    }
+  },
+  "required": [
+    "id",
+    "name",
+    "homepage",
+    "license",
+    "license_evidence",
+    "license_checked",
+    "commercial_use_ok",
+    "redistribution_ok",
+    "attribution",
+    "access"
+  ],
+  "title": "Source",
+  "type": "object"
+}
