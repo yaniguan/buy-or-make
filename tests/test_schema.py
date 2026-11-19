@@ -82,6 +82,14 @@ def test_all_sources_valid() -> None:
         assert src.status in {"integrated", "fetch_only", "not_used", "planned"}
 
 
+def test_zinc_indirect_license_check_is_machine_visible() -> None:
+    by_id = {src.id: src for src in SOURCES}
+    zinc = by_id["zinc"]
+    assert "indirect" in zinc.license_checked
+    assert zinc.notes is not None and "LICENSE CHECK INDIRECT" in zinc.notes
+    assert all("indirect" not in src.license_checked for src in SOURCES if src.id != "zinc")
+
+
 def test_export_json_schema(tmp_path: Path) -> None:
     paths = export_json_schema(tmp_path)
     assert len(paths) == 5
