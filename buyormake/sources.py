@@ -51,6 +51,7 @@ SOURCES: list[Source] = [
             "portions or commercial redistribution requires written permission."
         ),
         license_checked=CHECKED_DATE,
+        license_check_method="indirect",
         commercial_use_ok=True,
         redistribution_ok=False,
         attribution="Irwin & Shoichet Labs, UCSF (ZINC database)",
@@ -60,6 +61,7 @@ SOURCES: list[Source] = [
         size_full="multi-GB subsets",
         status="fetch_only",
         notes=(
+            "LICENSE CHECK INDIRECT: evidence URL was not reachable on the check date. "
             "Fetch script provided (data lands in gitignored data/). Not redistributed in repo. "
             "Note: wiki.docking.org TLS handshake timed out/errored from this host on check date; "
             "terms corroborated against prior ZINC Terms_And_Conditions documentation."

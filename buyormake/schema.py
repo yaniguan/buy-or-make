@@ -8,15 +8,43 @@ so availability records can be exported to an open-data hub without renaming.
 from __future__ import annotations
 
 import json
+import math
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Literal, Optional
+from typing import Iterable, Literal, Optional
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from .canonical import canonical_json, sha256_hex
 
 SCHEMA_VERSION = "0.1.0"
+
+# Conservative license restrictiveness ranking (higher = more restrictive; wins when combining).
+_LICENSE_RESTRICTIVENESS: dict[str, int] = {
+    "CC0-1.0": 10,
+    "MIT": 20,
+    "BSD-2-Clause": 30,
+    "BSD-3-Clause": 30,
+    "Apache-2.0": 35,
+    "CC-BY-4.0": 50,
+    "CC-BY-SA-4.0": 70,
+    "CC-BY-NC-4.0": 85,
+    "CC-BY-NC-SA-4.0": 90,
+    "custom/terms": 100,
+}
+
+
+def select_record_license(licenses: Iterable[str], default: str = "MIT") -> str:
+    """Select the single governing license for a combined record (most restrictive wins)."""
+    cleaned = sorted({lic.strip() for lic in licenses if lic and lic.strip()})
+    if not cleaned:
+        return default
+    return max(cleaned, key=lambda lic: (_LICENSE_RESTRICTIVENESS.get(lic, 95), lic))
+
+
+def make_assayfold_record_id(source_id: str, dataset_id: str, native_id: str) -> str:
+    """Deterministic assayfold record_id ('af:' + 24 hex chars of SHA-256)."""
+    return "af:" + sha256_hex(f"{source_id}|{dataset_id}|{native_id}".encode("utf-8"))[:24]
 
 
 def utc_now() -> str:
@@ -38,12 +66,43 @@ class Uncertainty(_Model):
     n: Optional[int] = None
     method: Optional[str] = None
 
+    @model_validator(mode="after")
+    def _validate_uncertainty(self) -> "Uncertainty":
+        for fname in ("std", "low", "high"):
+            val = getattr(self, fname)
+            if val is not None and not math.isfinite(val):
+                raise ValueError(f"Uncertainty.{fname} must be finite")
+        if self.std is not None and self.std < 0:
+            raise ValueError("Uncertainty.std must be >= 0")
+        if self.n is not None and self.n < 0:
+            raise ValueError("Uncertainty.n must be >= 0")
+        if self.low is not None and self.high is not None and self.low > self.high:
+            raise ValueError("Uncertainty.low must be <= Uncertainty.high")
+        return self
+
 
 class Quantity(_Model):
     value: Optional[float] = None
     unit: str = "1"
     raw_unit_str: Optional[str] = None
     uncertainty: Optional[Uncertainty] = None
+
+    @model_validator(mode="after")
+    def _validate_quantity(self) -> "Quantity":
+        if self.value is not None and not math.isfinite(self.value):
+            raise ValueError("Quantity.value must be a finite float")
+        if not self.unit or not self.unit.strip():
+            raise ValueError("Quantity.unit must be non-empty")
+        return self
+
+
+class BlobRef(_Model):
+    sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    media_type: str
+    size_bytes: int = Field(ge=0)
+    filename_orig: Optional[str] = None
+    url: Optional[str] = None
+    role: Literal["raw", "derived", "thumbnail"] = "raw"
 
 
 class AgentRef(_Model):
@@ -76,7 +135,8 @@ class Source(_Model):
     license_url: Optional[str] = None
     license_evidence: str
     license_quote: Optional[str] = None
-    license_checked: str
+    license_checked: str = Field(pattern=r"^\d{4}-\d{2}-\d{2}$")
+    license_check_method: Literal["direct", "indirect"] = "direct"
     commercial_use_ok: bool
     redistribution_ok: bool
     attribution: str
@@ -115,6 +175,26 @@ class Offer(_Model):
     fetched_utc: str = Field(default_factory=utc_now)
     license: str
 
+    @model_validator(mode="after")
+    def _validate_offer(self) -> "Offer":
+        if self.price is not None:
+            if isinstance(self.price, bool) or not math.isfinite(self.price) or self.price < 0:
+                raise ValueError("Offer.price must be a finite number >= 0")
+            if self.currency is None or not self.currency.strip():
+                raise ValueError("Offer.currency is required whenever Offer.price is set")
+        else:
+            if self.currency is not None:
+                raise ValueError("Offer.currency must be None when Offer.price is None")
+            if self.price_basis == "listed_catalog":
+                raise ValueError("Offer.price_basis='listed_catalog' requires a non-null price")
+        if self.lead_time_days is not None:
+            if isinstance(self.lead_time_days, bool) or self.lead_time_days < 0:
+                raise ValueError("Offer.lead_time_days must be >= 0")
+        if self.pack_size is not None and self.pack_size.value is not None:
+            if self.pack_size.value <= 0:
+                raise ValueError("Offer.pack_size.value must be > 0")
+        return self
+
 
 class RouteStep(_Model):
     product: str
@@ -136,14 +216,68 @@ class Route(_Model):
     est_cost_method: str
     est_cost_complete: bool
 
+    @model_validator(mode="after")
+    def _validate_route(self) -> "Route":
+        if self.n_steps < 0:
+            raise ValueError("Route.n_steps must be >= 0")
+        if len(self.leaves) != len(self.leaves_purchasable):
+            raise ValueError("Route.leaves and Route.leaves_purchasable must have equal length")
+        if self.score is not None and not math.isfinite(self.score):
+            raise ValueError("Route.score must be finite")
+        return self
+
 
 class SAScores(_Model):
     sascore: Optional[float] = None
     scscore: Optional[float] = None
     rascore: Optional[float] = None
 
+    @model_validator(mode="after")
+    def _validate_scores(self) -> "SAScores":
+        for fname in ("sascore", "scscore", "rascore"):
+            val = getattr(self, fname)
+            if val is not None and not math.isfinite(val):
+                raise ValueError(f"SAScores.{fname} must be finite")
+        return self
+
 
 OriginLiteral = Literal["real", "simulated", "model_generated", "synthetic_demo"]
+
+
+class AssayfoldRecord(_Model):
+    """Top-level `assayfold` hub `Record(kind='molecule')` envelope."""
+
+    record_id: str
+    source_id: str = Field(pattern=r"^[a-z0-9_]+$")
+    dataset_id: str
+    native_id: str
+    kind: Literal["molecule"] = "molecule"
+    parent_id: Optional[str] = None
+    text: Optional[str] = None
+    payload: Molecule
+    properties: dict[str, Quantity] = Field(default_factory=dict)
+    blobs: list[BlobRef] = Field(default_factory=list)
+    license: str
+    origin: OriginLiteral = "real"
+    provenance: Provenance = Field(default_factory=Provenance)
+    tags: list[str] = Field(default_factory=list)
+    schema_version: str = SCHEMA_VERSION
+    record_hash: Optional[str] = None
+
+    @model_validator(mode="after")
+    def _kind_matches(self) -> "AssayfoldRecord":
+        if self.kind != self.payload.kind:
+            raise ValueError(f"kind {self.kind!r} != payload kind {self.payload.kind!r}")
+        return self
+
+    def content_hash(self) -> str:
+        """SHA-256 over canonical JSON. Matches `assayfold.schema.Record.content_hash()`."""
+        d = self.model_dump(mode="json", exclude={"record_hash"})
+        d["provenance"].pop("recorded_utc", None)
+        return sha256_hex(canonical_json(d))
+
+    def sealed(self) -> "AssayfoldRecord":
+        return self.model_copy(update={"record_hash": self.content_hash()})
 
 
 class AvailabilityRecord(_Model):
@@ -167,9 +301,80 @@ class AvailabilityRecord(_Model):
         """Return a copy with record_hash filled in."""
         return self.model_copy(update={"record_hash": self.content_hash()})
 
+    def to_assayfold_record(
+        self,
+        *,
+        source_id: str = "buy_or_make",
+        dataset_id: str = "availability_triage",
+        native_id: Optional[str] = None,
+    ) -> AssayfoldRecord:
+        """Convert this `AvailabilityRecord` into a sealed `assayfold` `Record(kind='molecule')`."""
+        from .cost import cheapest_offer_for_target
+
+        nid = str(native_id or self.molecule.inchikey or self.molecule.smiles)
+        props: dict[str, Quantity] = {
+            "n_offers": Quantity(value=float(len(self.offers)), unit="1"),
+        }
+        best_price = cheapest_offer_for_target(self.offers)
+        if best_price is not None:
+            props["best_price"] = best_price
+
+        solved = [r for r in self.routes if r.leaves and all(r.leaves_purchasable)]
+        if self.offers:
+            status_tag = "status:buyable"
+            props["min_synthesis_steps"] = Quantity(value=0.0, unit="1")
+        elif solved:
+            status_tag = "status:makeable"
+            best_route = solved[0]
+            props["min_synthesis_steps"] = Quantity(value=float(best_route.n_steps), unit="1")
+            if best_route.est_cost is not None:
+                props["est_route_cost"] = best_route.est_cost
+            if best_route.score is not None:
+                props["route_score"] = Quantity(value=float(best_route.score), unit="1")
+        else:
+            status_tag = "status:unknown"
+
+        if self.sa_scores.sascore is not None:
+            props["sascore"] = Quantity(value=self.sa_scores.sascore, unit="1")
+        if self.sa_scores.scscore is not None:
+            props["scscore"] = Quantity(value=self.sa_scores.scscore, unit="1")
+        if self.sa_scores.rascore is not None:
+            props["rascore"] = Quantity(value=self.sa_scores.rascore, unit="1")
+
+        all_licenses = set(self.licenses)
+        for off in self.offers:
+            if off.license:
+                all_licenses.add(off.license)
+        governing_license = select_record_license(all_licenses, default="MIT")
+
+        tags = [status_tag]
+        for lic in sorted(all_licenses):
+            tags.append(f"license:{lic}")
+
+        avail_hash = self.record_hash or self.content_hash()
+        derived = list(dict.fromkeys([*self.provenance.derived_from, avail_hash]))
+        prov = self.provenance.model_copy(update={"derived_from": derived})
+
+        return AssayfoldRecord(
+            record_id=make_assayfold_record_id(source_id, dataset_id, nid),
+            source_id=source_id,
+            dataset_id=dataset_id,
+            native_id=nid,
+            kind="molecule",
+            payload=self.molecule,
+            properties=props,
+            blobs=[],
+            license=governing_license,
+            origin=self.origin,
+            provenance=prov,
+            tags=tags,
+            schema_version=self.schema_version,
+        ).sealed()
+
 
 class RankResult(_Model):
     candidate: str
+    name: Optional[str] = None
     canonical_smiles: Optional[str] = None
     inchikey: Optional[str] = None
     status: Literal["buyable", "makeable", "unknown", "invalid"]
@@ -182,10 +387,20 @@ class RankResult(_Model):
     evidence: list[str] = Field(default_factory=list)
 
 
+PriceStatusLiteral = Literal[
+    "verified",
+    "missing",
+    "incomplete",
+    "incompatible_unit",
+    "not_applicable",
+]
+
+
 class ProposalDecision(_Model):
     candidate: str
     keep: bool
     over_budget: bool
+    price_status: PriceStatusLiteral = "not_applicable"
     status: Literal["buyable", "makeable", "unknown", "invalid"]
     reasons: list[str] = Field(default_factory=list)
     result: RankResult
@@ -193,6 +408,8 @@ class ProposalDecision(_Model):
 
 class FilterSummary(_Model):
     budget: Optional[float] = None
+    budget_currency: str = "USD"
+    require_complete_cost: bool = False
     kept: list[RankResult] = Field(default_factory=list)
     over_budget: list[RankResult] = Field(default_factory=list)
     rejected: list[RankResult] = Field(default_factory=list)
@@ -213,6 +430,9 @@ def export_json_schema(out_dir: Path | str = "schema") -> list[Path]:
     paths: list[Path] = []
     for name, model in models:
         p = out / f"{name}.schema.json"
-        p.write_text(json.dumps(model.model_json_schema(), indent=2, sort_keys=True) + "\n")
+        p.write_text(
+            json.dumps(model.model_json_schema(), indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
         paths.append(p)
     return paths

@@ -9,18 +9,19 @@ python3 -m venv .venv
 source .venv/bin/activate
 pip install -e ".[test]"
 
-# Optional: fetch MIT-licensed SCScore NumPy weights (6.18 MB) into data/scscore/
+# Optional: fetch MIT-licensed SCScore NumPy weights (6.18 MB, SHA-256 verified) into data/scscore/
 python scripts/fetch_scscore.py
 
-# Rank candidates from a SMILES file (1 SMILES per line)
+# Rank or budget-filter candidates from a SMILES file (SMILES [optional_name])
 cat > /tmp/candidates.smi << 'EOF'
-CC(=O)Oc1ccccc1C(=O)O
-COc1ccc(C(=O)Nc2ccc(-c3ccccn3)cc2)cc1
-invalid_smiles
+CC(=O)Oc1ccccc1C(=O)O Aspirin
+COc1ccc(C(=O)Nc2ccc(-c3ccccn3)cc2)cc1 Analog-3
+invalid_smiles BadMol
 EOF
 
 buy-or-make rank /tmp/candidates.smi --max-steps 2
-buy-or-make rank /tmp/candidates.smi --max-steps 2 --json
+buy-or-make rank /tmp/candidates.smi --max-steps 2 --records-out /tmp/records.jsonl --json
+buy-or-make filter /tmp/candidates.smi --max-steps 2 --budget 25.0 --budget-currency USD --require-complete-cost --json
 ```
 
 > **Auto-Lab Ecosystem**: Layer `L5 · Executive Planning, Procurement & Scheduling` in [auto-lab](https://github.com/yaniguan/auto-lab) · [Project Studio](https://yaniguan.github.io/auto-lab/)
@@ -30,38 +31,39 @@ buy-or-make rank /tmp/candidates.smi --max-steps 2 --json
 Full architectural documentation, cost/ranking invariants, commit and branch evolution, and sibling-repository contracts are maintained in [`docs/ARCHITECTURE_AND_HISTORY.md`](docs/ARCHITECTURE_AND_HISTORY.md):
 
 - **Object**: Cost-aware molecular availability and retrosynthetic procurement triage (`L5`) verifying whether candidate molecules from `L6`/`L5` planners (`lab-ask-why`, `lab-decide`) are directly purchasable or makeable in $N$ steps from purchasable building blocks before wet-lab scheduling (`labshift`).
-- **Data**: 12 license-audited chemical vendor, reaction, stock, and scoring sources (`buyormake/sources.py`, gitignored `data/` fetch-only isolation), 5 strict Pydantic v2 / JSON Schema contracts (`extra="forbid"`, aligned with `assayfold`), and a 20-molecule CPU benchmark (`examples/demo.py`).
-- **Model**: RDKit canonical/InChIKey normalization, live `PubChem PUG-REST/PUG-View` + multi-format `LocalStockBackend`, 3-tier retrosynthesis (`AiZynthFinder` MCTS, `USPTO`/`ORD` SQLite lookup, 14-template RDKit SMARTS 2-step fallback), conservative mass-normalized `USD/g` stoichiometric leaf cost estimator, and `SAscore` + NumPy `SCScore`.
+- **Data**: 12 license-audited chemical vendor, reaction, stock, and scoring sources (`buyormake/sources.py`, gitignored `data/` fetch-only isolation with atomic `.part` checksum verification), 5 strict Pydantic v2 / JSON Schema contracts (`extra="forbid"`, aligned with `assayfold`), and a 20-molecule CPU benchmark (`examples/demo.py`).
+- **Model**: RDKit canonical/InChIKey normalization with optional salt/counterion parent fallback, live throttled/retry-hardened `PubChem PUG-REST/PUG-View` + multi-format `LocalStockBackend` (including priced SQLite and `h5py`/PyTables HDF5), 3-tier retrosynthesis (`AiZynthFinder` MCTS, multi-step `USPTO`/`ORD` SQLite lookup with spectator filtering, and 17 atom-conserved RDKit SMARTS templates), unit-aware `USD/g` stoichiometric leaf cost estimator, and `SAscore` + overflow-safe NumPy `SCScore`.
 - **Training**: Zero model training in-repo; combines deterministic cheminformatics rules with RDKit's fragment `SAscore` and frozen pretrained Reaxys `SCScore` weights (`6.18 MB`, optional `CC-BY-4.0` `AiZynthFinder` ONNX policies).
-- **History**: Initialized on `main` in `76991c8` (`2026-11-18`) with full package, schemas, fetchers, demo, and test suite; followed by open review branch `origin/review-fixes` (`bbfa649`, `2026-11-18`) refining `cost_complete` semantics, single-currency/same-pack price comparability, excluded-leaf reporting, and indirect ZINC license-check markers.
-- **Unique Properties**: Strict `null`/`"unknown"` honesty (never invents missing catalog prices or conflates search bounds with synthetic impossibility), completeness-aware leaf-cost lower bounds, zero-redistribution license gating, and timestamp-invariant SHA-256 `AvailabilityRecord` sealing compatible with `assayfold`.
+- **History**: Initialized on `main` in `76991c8` (`2026-11-18`), refined in `origin/review-fixes` (`bbfa649`, `2026-11-18`) for `cost_complete`, single-currency/same-pack price comparability, excluded-leaf reporting, and indirect ZINC license-check markers, and hardened on `fix/resolve-audit-issues` with acyclic `!@` SMARTS + element conservation, transient HTTP cache guards, route/leaf license propagation, unit-aware ranking/budget gates, and `assayfold`/`labshift` handoff adapters.
+- **Unique Properties**: Strict `null`/`"unknown"` honesty (never invents missing catalog prices or conflates search bounds with synthetic impossibility), completeness-aware leaf-cost lower bounds, zero-redistribution license gating across target/route/leaf sources, and deterministic SHA-256 `AvailabilityRecord` + `AssayfoldRecord` sealing compatible with `assayfold` and `labshift`.
 
 ## Repository Layout
 
 ```text
 buy-or-make/
 ├── .github/workflows/
-│   └── ci.yml                            # Matrix pytest CI across Python 3.10, 3.11, 3.12
+│   └── ci.yml                            # Matrix pytest + ruff + zero-schema-drift CI (Python 3.10–3.13)
 ├── buyormake/
 │   ├── __init__.py                       # Public API exports
-│   ├── cache.py                          # Persistent SQLite API response cache (ResponseCache)
-│   ├── canonical.py                      # Canonical JSON, SHA-256, and RDKit SMILES/InChIKey helpers
-│   ├── cli.py                            # CLI entry point (rank, export-schema, sources)
+│   ├── cache.py                          # Persistent SQLite API response cache with TTL & refresh
+│   ├── canonical.py                      # Canonical JSON, SHA-256, atomic downloads & RDKit desalting
+│   ├── cli.py                            # CLI entry point (rank, filter, export-schema, sources)
 │   ├── cost.py                           # Mass-normalized USD/g offer & leaf-only route cost logic
+│   ├── handoff.py                        # L5 -> L0/L5 adapters (assayfold Record & labshift release times)
 │   ├── rank.py                           # cost_aware_rank, evaluate_candidates, filter_proposals
-│   ├── routes.py                         # AiZynthFinder, USPTO/ORD SQLite lookup & 14 SMARTS templates
+│   ├── routes.py                         # AiZynthFinder, multi-step USPTO/ORD lookup & 17 SMARTS templates
 │   ├── schema.py                         # Pydantic v2 models (extra='forbid') & JSON Schema exporter
-│   ├── scores.py                         # RDKit SAscore & standalone NumPy SCScore inference
+│   ├── scores.py                         # RDKit SAscore & overflow-safe standalone NumPy SCScore
 │   ├── sources.py                        # 12 license-audited data & model Source definitions
-│   └── stock.py                          # LocalStockBackend & rate-limited PubChemVendorBackend
+│   └── stock.py                          # Multi-format LocalStockBackend & PubChemVendorBackend
 ├── docs/
 │   └── ARCHITECTURE_AND_HISTORY.md       # Deep technical profile (Object, Data, Model, History)
 ├── examples/
 │   ├── demo.py                           # 20-molecule cold vs. cached CPU benchmark script
 │   └── demo_output.md                    # Recorded CPU runtime and candidate triage table
 ├── schema/                               # Exported JSON Schemas (offer, route, source, rank_result, ...)
-├── scripts/                              # Local-only fetchers (scscore, uspto, ord, zinc, mcule, ...)
-├── tests/                                # Offline pytest suite (cache, cli, cost, rank, routes, ...)
+├── scripts/                              # Checksum-verified local fetchers & reaction/SDF indexers
+├── tests/                                # Offline pytest suite (cache, cli, cost, handoff, indexers, ...)
 ├── LICENSE                               # MIT License
 ├── pyproject.toml                        # Build metadata, dependencies, and optional extras
 └── README.md                             # Usage guide, source license table, demo metrics & caveats
@@ -70,7 +72,12 @@ buy-or-make/
 ## Python API
 
 ```python
-from buyormake import cost_aware_rank, filter_proposals
+from buyormake import (
+    build_labshift_release_map,
+    cost_aware_rank,
+    evaluate_candidates,
+    filter_proposals,
+)
 
 candidates = [
     "CC(=O)Oc1ccccc1C(=O)O",                    # buyable
@@ -78,7 +85,7 @@ candidates = [
     "C1CC(invalid",                              # invalid
 ]
 
-ranked = cost_aware_rank(
+ranked, records = evaluate_candidates(
     candidates,
     max_steps=2,
     backends=("local_stock", "pubchem"),
@@ -88,22 +95,32 @@ ranked = cost_aware_rank(
 for r in ranked:
     print(r.status, r.n_steps, r.best_price, r.est_cost, r.reasons[0])
 
-# Co-scientist proposal filter (keeps buyable/makeable, flags over-budget)
-summary = filter_proposals(candidates, max_steps=2, budget=25.0)
+# Convert to sealed assayfold Record(kind='molecule') or labshift job release offsets
+af_rec = records[0].to_assayfold_record()
+release_minutes = build_labshift_release_map(records)
+
+# Co-scientist proposal filter (unit-checked per-gram budget + optional completeness enforcement)
+summary = filter_proposals(
+    candidates,
+    max_steps=2,
+    budget=25.0,
+    budget_currency="USD",
+    require_complete_cost=False,
+)
 print("kept:", len(summary.kept), "over_budget:", len(summary.over_budget))
 ```
 
-Ranking order: `buyable` (cheaper known price first, `null` price after) < `makeable` (fewer steps, lower cost) < `unknown` < `invalid`.
+Ranking order: `buyable` (`USD/g` ascending, then other units grouped by unit, then `null` price) < `makeable` (fewer steps, complete `USD` cost before other currencies before partial cost before `null`) < `unknown` < `invalid`.
 
 ## Schema summary
 
-All models in [`buyormake/schema.py`](buyormake/schema.py) use Pydantic v2 (`extra="forbid"`), align shared field names (`Source`, `Quantity`, `Uncertainty`, `Provenance`, `Molecule`, `origin`, `schema_version`, `record_hash`) with the `assayfold` hub schema, and export JSON Schemas to `schema/`:
+All models in [`buyormake/schema.py`](buyormake/schema.py) use Pydantic v2 (`extra="forbid"`), enforce finite non-negative numeric invariants, align shared field names (`Source`, `Quantity`, `Uncertainty`, `Provenance`, `Molecule`, `origin`, `schema_version`, `record_hash`) with the `assayfold` hub schema, and export JSON Schemas to `schema/`:
 
-- `Source`: evaluated dataset/API metadata, SPDX or `custom/terms`, `license_evidence`, `license_quote`, `license_checked`, `commercial_use_ok`, `redistribution_ok`, `status`.
+- `Source`: evaluated dataset/API metadata, SPDX or `custom/terms`, `license_evidence`, `license_quote`, ISO `license_checked` (`YYYY-MM-DD`), `license_check_method` (`"direct" | "indirect"`), `commercial_use_ok`, `redistribution_ok`, `status`.
 - `Offer`: `inchikey`, `vendor`, `catalog_id`, `pack_size` (`Quantity`), `purity`, `price` (`float | null`), `currency` (`str | null`), `price_basis` (`"listed_catalog" | "unknown"`), `lead_time_days`, `in_stock`, `source_id`, `source_url`, `fetched_utc`, `license`.
-- `Route` / `RouteStep`: `target_inchikey`, `n_steps`, `steps`, `leaves`, `leaves_purchasable`, `method`, `est_cost` (`Quantity | null`), `est_cost_method`, `est_cost_complete`.
-- `AvailabilityRecord`: `molecule`, `offers`, `routes`, `sa_scores` (`sascore`, `scscore`, `rascore`), `origin`, `provenance`, `licenses`, `schema_version`, deterministic `record_hash` (SHA-256 of canonical JSON).
-- `RankResult`: `candidate`, `canonical_smiles`, `inchikey`, `status` (`buyable | makeable | unknown | invalid`), `n_steps`, `best_price`, `est_cost`, `cost_complete`, `sa_scores`, `reasons`, `evidence`.
+- `Route` / `RouteStep`: `target_inchikey`, `n_steps`, `steps`, `leaves`, `leaves_purchasable`, `method`, `score`, `est_cost` (`Quantity | null`), `est_cost_method`, `est_cost_complete`.
+- `AvailabilityRecord`: `molecule`, `offers`, `routes`, `sa_scores` (`sascore`, `scscore`, `rascore`), `origin`, `provenance` (propagating target, route-step, and leaf sources), `licenses`, `schema_version`, deterministic `record_hash`, and `.to_assayfold_record()`.
+- `RankResult`: `candidate`, `name`, `canonical_smiles`, `inchikey`, `status` (`buyable | makeable | unknown | invalid`), `n_steps`, `best_price`, `est_cost`, `cost_complete`, `sa_scores`, `reasons`, `evidence`.
 
 Regenerate JSON Schemas with:
 
@@ -113,7 +130,7 @@ buy-or-make export-schema --out schema
 
 ## Evaluated sources & licenses
 
-Every source license/terms page was checked on `2026-11-18`. Non-redistributable datasets are never committed to the repository; fetch scripts write into the gitignored `data/` directory.
+Every source license/terms page was checked on `2026-11-18`, except ZINC, whose terms page was unreachable and was checked indirectly (`license_checked = "2026-11-18"`, `license_check_method = "indirect"` in `buyormake/sources.py`). Non-redistributable datasets are never committed to the repository; fetch scripts stream via `.part` temporary files with checksum verification into the gitignored `data/` directory.
 
 | Source | Role | License | Commercial use | Redistribution | Status | Evidence |
 |---|---|---|---|---|---|---|
@@ -130,15 +147,15 @@ Every source license/terms page was checked on `2026-11-18`. Non-redistributable
 | SCScore (Coley et al.) | Synthetic complexity score (1–5, NumPy) | `MIT` | Yes | Yes | `integrated` | [SCScore LICENSE](https://raw.githubusercontent.com/connorcoley/scscore/master/LICENSE) |
 | RAscore (Reymond Group) | Learned retrosynthetic accessibility (52 MB) | `MIT` | Yes | Yes | `not_used` | [RAscore LICENSE](https://raw.githubusercontent.com/reymond-group/RAscore/master/LICENSE) |
 
-Note on ZINC check: `wiki.docking.org` dropped TLS connections from the test host on `2026-11-18`; its terms (`fetch_only`, no major-portion redistribution without written permission) were verified from prior documentation and search results.
+Note on ZINC check: `wiki.docking.org` dropped TLS connections from the test host on `2026-11-18`; its terms (`fetch_only`, no major-portion redistribution without written permission) were verified from prior documentation and search results. This is machine-visible on the `Source` record via `license_check_method = "indirect"` and `notes` starting with `LICENSE CHECK INDIRECT`.
 
 ## Demo coverage and CPU runtime
 
-Measured from an actual run of [`examples/demo.py`](examples/demo.py) on `2026-11-18` (20 candidates: 6 common drugs, 6 reagents/building blocks, 6 hand-drawn analogs, 2 invalid SMILES; 2 of the 6 analogs turned out to be already listed by vendors) using live PubChem PUG-REST/PUG-View + RDKit SAscore + NumPy SCScore + built-in 2-step template fallback:
+Measured from an actual run of [`examples/demo.py`](examples/demo.py) on `2026-11-22` (20 candidates: 6 common drugs, 6 reagents/building blocks, 6 hand-drawn analogs, 2 invalid SMILES; 2 of the 6 analogs are listed directly by PubChem vendors, and 3 are 1-step makeable via atom-conserved acyclic SMARTS disconnections) using live PubChem PUG-REST/PUG-View + RDKit SAscore + NumPy SCScore + built-in 2-step template fallback:
 
-- **Hardware / Environment**: Intel(R) Xeon(R) Processor (CPU only), Python 3.12.16, RDKit 2026.09.2
-- **Cold run wall time**: `24.970 s` total (`1.249 s / molecule`, rate-limited at <= 5 req/s to PubChem)
-- **Cached run wall time**: `0.099 s` total (`0.005 s / molecule`, offline SQLite cache)
+- **Hardware / Environment**: AuthenticAMD CPU, Python 3.11.15, RDKit 2026.03.4
+- **Cold run wall time**: `38.737 s` total (`1.937 s / molecule`, throttled on both `GET` and `POST` at <= 5 req/s to PubChem)
+- **Cached run wall time**: `0.058 s` total (`0.003 s / molecule`, offline SQLite cache)
 
 | Metric | Count | Fraction of total (n=20) | Fraction of valid (n=18) |
 |---|---:|---:|---:|
@@ -149,12 +166,14 @@ Measured from an actual run of [`examples/demo.py`](examples/demo.py) on `2026-1
 | Complete price known | 0 | 0.0% | 0.0% |
 | Route found (for non-buyable) | 3 | 15.0% | 16.7% |
 
+The demo configuration has no price source: PubChem Chemical Vendors publishes vendors and catalog IDs but not prices, and no local priced offer file was supplied. The cost columns (`best_price`, `est_cost`) are therefore structurally `null`, and the "Complete price known = 0" row is a consequence of that configuration, not a measured result of the cost logic. The cost estimator (`cheapest_offer_for_target`, `estimate_route_cost`) is demonstrated by the unit tests in `tests/test_cost.py`, `tests/test_rank.py`, and `tests/test_stock_formats.py`, which use synthetic local offers.
+
 Full candidate-by-candidate table is saved in [`examples/demo_output.md`](examples/demo_output.md).
 
 ## Optional backends & local data scripts
 
-- **Local priced/unpriced stock** (`.tsv`, `.csv`, `.jsonl`, `.smi`, `.smi.gz`, `.sqlite`, `.hdf5`): pass `--stock path/to/file` or place `data/stock.sqlite` / `data/stock.tsv`.
-- **USPTO / ORD exact reaction lookup**:
+- **Local priced/unpriced stock** (`.tsv`, `.csv`, `.jsonl`, `.smi`, `.smi.gz`, `.sqlite`, `.hdf5`): pass `--stock path/to/file` or place `data/stock.sqlite` / `data/stock.tsv`. Install `pip install -e ".[hdf5]"` for HDF5 stocks.
+- **USPTO / ORD exact reaction lookup** (supports up to 3-step chaining and filters unmapped catalyst/solvent spectators):
   ```bash
   pip install -e ".[data]"
   python scripts/fetch_uspto.py --max-rows 100000
@@ -171,10 +190,12 @@ Full candidate-by-candidate table is saved in [`examples/demo_output.md`](exampl
 ## Caveats and limitations
 
 - **Not purchasing advice.** Catalog prices change frequently and vary by region, currency, purity, pack size, institutional discounts, and account terms. A publicly listed price is not a binding quote.
-- **PubChem vendor lists are capped at 25 per molecule** in the default backend (`max_offers=25`). A PubChem listing means a vendor deposited the record; it does not prove the item is in stock today.
+- **PubChem vendor lists are capped at 25 per molecule** in the default backend (`max_offers=25`). Online cache entries default to a 30-day TTL (`--cache-max-age-days`, bypassable via `--refresh-cache`), while `--offline` uses cached entries without expiration. Transient HTTP `5xx`/`429`/timeout errors are retried and never cached as negative results.
 - **Missing prices stay `null`.** Free public sources (PubChem Chemical Vendors, eMolecules free, Mcule free, ZINC, Enamine Open Structure Data) do not publish prices. Unless you supply a local offer file with real `listed_catalog` prices, `best_price` and `est_cost` remain `null`.
-- **Route cost is a rough lower bound.** When leaf prices are supplied, `est_cost` sums `cheapest_USD_per_g * count * (MW_leaf / MW_target)` per 1 g target. It ignores solvents, reagents, catalysts, reaction yield, purification, analytical QC, and labor. If any leaf lacks a price, `cost_complete` is `false`.
-- **Template fallback is heuristic.** The 14 built-in RDKit SMARTS disconnections (max 2 steps) ignore stereochemistry, protecting groups, regioselectivity, chemoselectivity, and reaction conditions.
+- **Route cost is a rough lower bound.** When leaf prices are supplied, `est_cost` sums `cheapest_USD_per_g * count * (MW_leaf / MW_target)` per 1 g target. It ignores solvents, reagents, catalysts, reaction yield, purification, analytical QC, and labor. If any leaf lacks a price, `cost_complete` is `false`. Leaves left out of the sum (unparseable SMILES or no listed USD/g price) are listed in the route's `est_cost_method` and in the `reasons` of a makeable result. For buyable molecules `est_cost` is `null` and `cost_complete` is `false`; the listed price is in `best_price`.
+- **`est_cost` for makeable molecules is the cost of a found route, not the minimum-cost route.** The template search is not exhaustive: it carries at most 6 first-step disconnections into a second step, tries at most 6 second-step disconnections for each, and stops expanding a first step once one second step reaches purchasable leaves. The reported route is the best of those enumerated (fewest steps, then cost); a cheaper route may exist.
+- **Prices in different currencies or pack sizes are never compared.** `best_price` is the cheapest per-gram price in `USD/g` when mass pack sizes are known; otherwise raw pack prices are compared only when all offers share one pack size, and non-USD offers only when they all use a single currency. In cross-molecule ranking and `filter_proposals(budget=...)`, `USD/g` offers are never numerically interleaved with raw per-pack `USD` or non-USD offers, and `--require-complete-cost` rejects unpriced or incomplete-cost candidates under strict budgets.
+- **Template fallback is heuristic.** The 17 built-in RDKit SMARTS disconnections (15 acyclic `!@` bimolecular templates + 2 monocyclic `@` ring-openings, max 2 steps, verified for exact heavy-atom conservation) ignore stereochemistry, protecting groups, regioselectivity, chemoselectivity, and reaction conditions.
 - **SA/SC scores are heuristics**, not synthesis guarantees.
 - **`"unknown"` does not mean impossible.** It only means no stock offer or complete route within `max_steps` was found in the configured backends.
 

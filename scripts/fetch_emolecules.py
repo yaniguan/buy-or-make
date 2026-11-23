@@ -6,7 +6,11 @@ from __future__ import annotations
 import argparse
 import re
 from pathlib import Path
+from typing import Optional
+
 import httpx
+
+from buyormake.canonical import atomic_download
 
 INDEX_URL = "https://downloads.emolecules.com/free/"
 OUT_DIR = Path("data/emolecules")
@@ -21,12 +25,14 @@ def latest_release_url() -> str:
     return f"{INDEX_URL}{dirs[-1]}version.smi.gz"
 
 
-def main() -> int:
+def main(argv: Optional[list[str]] = None) -> int:
     parser = argparse.ArgumentParser(
         description="Fetch eMolecules free version.smi.gz (~350 MB; structures only, no prices)."
     )
     parser.add_argument("--dry-run", action="store_true", help="Print resolved release URL and exit.")
-    args = parser.parse_args()
+    parser.add_argument("--expected-sha256", default=None, help="Optional pinned SHA-256 hex digest.")
+    parser.add_argument("--force", action="store_true", help="Re-download even if verified.")
+    args = parser.parse_args(argv)
 
     url = latest_release_url()
     print("eMolecules notice: free download contains SMILES and IDs only (no prices, no redistribution).")
@@ -37,12 +43,14 @@ def main() -> int:
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     dest = OUT_DIR / "version.smi.gz"
     print(f"Downloading {url} -> {dest}")
-    with httpx.stream("GET", url, follow_redirects=True, timeout=300.0) as r:
-        r.raise_for_status()
-        with dest.open("wb") as f:
-            for chunk in r.iter_bytes():
-                f.write(chunk)
-    print(f"Saved {dest} ({dest.stat().st_size} bytes)")
+    sha = atomic_download(
+        url,
+        dest,
+        expected_sha256=args.expected_sha256,
+        timeout=300.0,
+        force=args.force,
+    )
+    print(f"Saved {dest} ({dest.stat().st_size} bytes, sha256={sha})")
     return 0
 
 
