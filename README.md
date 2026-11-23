@@ -23,6 +23,50 @@ buy-or-make rank /tmp/candidates.smi --max-steps 2
 buy-or-make rank /tmp/candidates.smi --max-steps 2 --json
 ```
 
+> **Auto-Lab Ecosystem**: Layer `L5 · Executive Planning, Procurement & Scheduling` in [auto-lab](https://github.com/yaniguan/auto-lab) · [Project Studio](https://yaniguan.github.io/auto-lab/)
+
+## System Profile: Object · Data · Model · Training · History · Unique Properties
+
+Full architectural documentation, cost/ranking invariants, commit and branch evolution, and sibling-repository contracts are maintained in [`docs/ARCHITECTURE_AND_HISTORY.md`](docs/ARCHITECTURE_AND_HISTORY.md):
+
+- **Object**: Cost-aware molecular availability and retrosynthetic procurement triage (`L5`) verifying whether candidate molecules from `L6`/`L5` planners (`lab-ask-why`, `lab-decide`) are directly purchasable or makeable in $N$ steps from purchasable building blocks before wet-lab scheduling (`labshift`).
+- **Data**: 12 license-audited chemical vendor, reaction, stock, and scoring sources (`buyormake/sources.py`, gitignored `data/` fetch-only isolation), 5 strict Pydantic v2 / JSON Schema contracts (`extra="forbid"`, aligned with `assayfold`), and a 20-molecule CPU benchmark (`examples/demo.py`).
+- **Model**: RDKit canonical/InChIKey normalization, live `PubChem PUG-REST/PUG-View` + multi-format `LocalStockBackend`, 3-tier retrosynthesis (`AiZynthFinder` MCTS, `USPTO`/`ORD` SQLite lookup, 14-template RDKit SMARTS 2-step fallback), conservative mass-normalized `USD/g` stoichiometric leaf cost estimator, and `SAscore` + NumPy `SCScore`.
+- **Training**: Zero model training in-repo; combines deterministic cheminformatics rules with RDKit's fragment `SAscore` and frozen pretrained Reaxys `SCScore` weights (`6.18 MB`, optional `CC-BY-4.0` `AiZynthFinder` ONNX policies).
+- **History**: Initialized on `main` in `76991c8` (`2026-11-18`) with full package, schemas, fetchers, demo, and test suite; followed by open review branch `origin/review-fixes` (`bbfa649`, `2026-11-18`) refining `cost_complete` semantics, single-currency/same-pack price comparability, excluded-leaf reporting, and indirect ZINC license-check markers.
+- **Unique Properties**: Strict `null`/`"unknown"` honesty (never invents missing catalog prices or conflates search bounds with synthetic impossibility), completeness-aware leaf-cost lower bounds, zero-redistribution license gating, and timestamp-invariant SHA-256 `AvailabilityRecord` sealing compatible with `assayfold`.
+
+## Repository Layout
+
+```text
+buy-or-make/
+├── .github/workflows/
+│   └── ci.yml                            # Matrix pytest CI across Python 3.10, 3.11, 3.12
+├── buyormake/
+│   ├── __init__.py                       # Public API exports
+│   ├── cache.py                          # Persistent SQLite API response cache (ResponseCache)
+│   ├── canonical.py                      # Canonical JSON, SHA-256, and RDKit SMILES/InChIKey helpers
+│   ├── cli.py                            # CLI entry point (rank, export-schema, sources)
+│   ├── cost.py                           # Mass-normalized USD/g offer & leaf-only route cost logic
+│   ├── rank.py                           # cost_aware_rank, evaluate_candidates, filter_proposals
+│   ├── routes.py                         # AiZynthFinder, USPTO/ORD SQLite lookup & 14 SMARTS templates
+│   ├── schema.py                         # Pydantic v2 models (extra='forbid') & JSON Schema exporter
+│   ├── scores.py                         # RDKit SAscore & standalone NumPy SCScore inference
+│   ├── sources.py                        # 12 license-audited data & model Source definitions
+│   └── stock.py                          # LocalStockBackend & rate-limited PubChemVendorBackend
+├── docs/
+│   └── ARCHITECTURE_AND_HISTORY.md       # Deep technical profile (Object, Data, Model, History)
+├── examples/
+│   ├── demo.py                           # 20-molecule cold vs. cached CPU benchmark script
+│   └── demo_output.md                    # Recorded CPU runtime and candidate triage table
+├── schema/                               # Exported JSON Schemas (offer, route, source, rank_result, ...)
+├── scripts/                              # Local-only fetchers (scscore, uspto, ord, zinc, mcule, ...)
+├── tests/                                # Offline pytest suite (cache, cli, cost, rank, routes, ...)
+├── LICENSE                               # MIT License
+├── pyproject.toml                        # Build metadata, dependencies, and optional extras
+└── README.md                             # Usage guide, source license table, demo metrics & caveats
+```
+
 ## Python API
 
 ```python
