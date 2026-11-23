@@ -13,7 +13,7 @@ from rdkit import Chem
 from rdkit.Chem import rdChemReactions
 
 from .canonical import normalize_smiles
-from .cost import EST_COST_METHOD, estimate_route_cost
+from .cost import EST_COST_METHOD, estimate_route_cost_detailed, route_cost_method
 from .schema import Offer, Route, RouteStep
 
 DEFAULT_REACTION_DB = Path("data/reactions.sqlite")
@@ -349,7 +349,9 @@ def _build_route(
         leaf_offers_by_ik[nm.inchikey] = offs
         leaves_purchasable.append(len(offs) > 0)
 
-    est_cost, est_complete = estimate_route_cost(target_smiles, leaves, leaf_offers_by_ik)
+    est_cost, est_complete, skipped = estimate_route_cost_detailed(
+        target_smiles, leaves, leaf_offers_by_ik
+    )
     return Route(
         target_inchikey=target_inchikey,
         n_steps=len(steps),
@@ -359,7 +361,7 @@ def _build_route(
         method=method,
         score=None,
         est_cost=est_cost,
-        est_cost_method=EST_COST_METHOD,
+        est_cost_method=route_cost_method(skipped),
         est_cost_complete=est_complete,
     )
 
@@ -470,6 +472,8 @@ def find_routes(
                         offer_lookup,
                     )
                     routes.append(r2)
+                    # Stop at the first solved second step for this disconnection: the 2-step
+                    # search is not exhaustive, so est_cost is for a found route, not the cheapest.
                     if r2.leaves and all(r2.leaves_purchasable):
                         break
 

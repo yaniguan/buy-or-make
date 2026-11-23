@@ -9,7 +9,7 @@ import httpx
 
 from .cache import DEFAULT_CACHE_PATH, ResponseCache
 from .canonical import normalize_smiles
-from .cost import cheapest_offer_for_target
+from .cost import cheapest_offer_for_target, skipped_leaves_from_method
 from .routes import (
     DEFAULT_REACTION_DB,
     AiZynthFinderBackend,
@@ -153,7 +153,8 @@ def evaluate_candidates(
                 status = "buyable"
                 best_price = cheapest_offer_for_target(offers)
                 est_cost = None
-                cost_complete = best_price is not None
+                # cost_complete describes a route cost estimate; buyables have none (see best_price)
+                cost_complete = False
                 n_steps = 0
                 vendors_preview = ", ".join(dict.fromkeys(o.vendor for o in offers[:3]))
                 suffix = f" (+{len(offers) - 3} more offers)" if len(offers) > 3 else ""
@@ -204,6 +205,9 @@ def evaluate_candidates(
                             f"estimated leaf-only cost: {est_cost.value} {est_cost.unit} "
                             "(per 1 g target; ignores solvents, yield, labor)"
                         )
+                    skipped_note = skipped_leaves_from_method(best_route.est_cost_method)
+                    if skipped_note:
+                        reasons.append(f"leaves excluded from route cost: {skipped_note}")
                 else:
                     status = "unknown"
                     n_steps = None

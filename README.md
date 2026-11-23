@@ -113,7 +113,7 @@ buy-or-make export-schema --out schema
 
 ## Evaluated sources & licenses
 
-Every source license/terms page was checked on `2026-11-18`. Non-redistributable datasets are never committed to the repository; fetch scripts write into the gitignored `data/` directory.
+Every source license/terms page was checked on `2026-11-18`, except ZINC, whose terms page was unreachable and was checked indirectly (see note below; recorded as `license_checked` = `2026-11-18 (indirect: ...)` in `buyormake/sources.py`). Non-redistributable datasets are never committed to the repository; fetch scripts write into the gitignored `data/` directory.
 
 | Source | Role | License | Commercial use | Redistribution | Status | Evidence |
 |---|---|---|---|---|---|---|
@@ -130,7 +130,7 @@ Every source license/terms page was checked on `2026-11-18`. Non-redistributable
 | SCScore (Coley et al.) | Synthetic complexity score (1–5, NumPy) | `MIT` | Yes | Yes | `integrated` | [SCScore LICENSE](https://raw.githubusercontent.com/connorcoley/scscore/master/LICENSE) |
 | RAscore (Reymond Group) | Learned retrosynthetic accessibility (52 MB) | `MIT` | Yes | Yes | `not_used` | [RAscore LICENSE](https://raw.githubusercontent.com/reymond-group/RAscore/master/LICENSE) |
 
-Note on ZINC check: `wiki.docking.org` dropped TLS connections from the test host on `2026-11-18`; its terms (`fetch_only`, no major-portion redistribution without written permission) were verified from prior documentation and search results.
+Note on ZINC check: `wiki.docking.org` dropped TLS connections from the test host on `2026-11-18`; its terms (`fetch_only`, no major-portion redistribution without written permission) were verified from prior documentation and search results. This is marked in the `Source` record itself: ZINC's `license_checked` carries an `(indirect: ...)` suffix and its `notes` start with `LICENSE CHECK INDIRECT`.
 
 ## Demo coverage and CPU runtime
 
@@ -148,6 +148,8 @@ Measured from an actual run of [`examples/demo.py`](examples/demo.py) on `2026-1
 | Invalid SMILES | 2 | 10.0% | - |
 | Complete price known | 0 | 0.0% | 0.0% |
 | Route found (for non-buyable) | 3 | 15.0% | 16.7% |
+
+The demo configuration has no price source: PubChem Chemical Vendors publishes vendors and catalog IDs but not prices, and no local priced offer file was supplied. The cost columns (`best_price`, `est_cost`) are therefore structurally `null`, and the "Complete price known = 0" row is a consequence of that configuration, not a measured result of the cost logic. The cost estimator (`cheapest_offer_for_target`, `estimate_route_cost`) is demonstrated only by the unit tests in `tests/test_cost.py` and `tests/test_rank.py`, which use synthetic local offers.
 
 Full candidate-by-candidate table is saved in [`examples/demo_output.md`](examples/demo_output.md).
 
@@ -173,7 +175,9 @@ Full candidate-by-candidate table is saved in [`examples/demo_output.md`](exampl
 - **Not purchasing advice.** Catalog prices change frequently and vary by region, currency, purity, pack size, institutional discounts, and account terms. A publicly listed price is not a binding quote.
 - **PubChem vendor lists are capped at 25 per molecule** in the default backend (`max_offers=25`). A PubChem listing means a vendor deposited the record; it does not prove the item is in stock today.
 - **Missing prices stay `null`.** Free public sources (PubChem Chemical Vendors, eMolecules free, Mcule free, ZINC, Enamine Open Structure Data) do not publish prices. Unless you supply a local offer file with real `listed_catalog` prices, `best_price` and `est_cost` remain `null`.
-- **Route cost is a rough lower bound.** When leaf prices are supplied, `est_cost` sums `cheapest_USD_per_g * count * (MW_leaf / MW_target)` per 1 g target. It ignores solvents, reagents, catalysts, reaction yield, purification, analytical QC, and labor. If any leaf lacks a price, `cost_complete` is `false`.
+- **Route cost is a rough lower bound.** When leaf prices are supplied, `est_cost` sums `cheapest_USD_per_g * count * (MW_leaf / MW_target)` per 1 g target. It ignores solvents, reagents, catalysts, reaction yield, purification, analytical QC, and labor. If any leaf lacks a price, `cost_complete` is `false`. Leaves left out of the sum (unparseable SMILES or no listed USD/g price) are listed in the route's `est_cost_method` and in the `reasons` of a makeable result. For buyable molecules `est_cost` is `null` and `cost_complete` is `false`; the listed price is in `best_price`.
+- **`est_cost` for makeable molecules is the cost of a found route, not the minimum-cost route.** The template search is not exhaustive: it carries at most 6 first-step disconnections into a second step, tries at most 6 second-step disconnections for each, and stops expanding a first step once one second step reaches purchasable leaves. The reported route is the best of those enumerated (fewest steps, then cost); a cheaper route may exist.
+- **Prices in different currencies or pack sizes are never compared.** `best_price` is the cheapest per-gram price in USD when mass pack sizes are known; otherwise raw pack prices are compared only when all offers share one pack size, and non-USD offers only when they all use a single currency. Anything else gives `null`.
 - **Template fallback is heuristic.** The 14 built-in RDKit SMARTS disconnections (max 2 steps) ignore stereochemistry, protecting groups, regioselectivity, chemoselectivity, and reaction conditions.
 - **SA/SC scores are heuristics**, not synthesis guarantees.
 - **`"unknown"` does not mean impossible.** It only means no stock offer or complete route within `max_steps` was found in the configured backends.

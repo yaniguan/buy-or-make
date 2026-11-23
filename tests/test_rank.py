@@ -63,13 +63,24 @@ def test_ranking_order_and_invalid_smiles(tmp_path: Path) -> None:
         "invalid",   # not_a_smiles
     ]
     assert ranked[0].candidate == "CC(=O)Nc1ccc(O)cc1"
+    # Priced buyable: price lives in best_price; there is no route cost estimate.
+    assert ranked[0].best_price is not None
+    assert ranked[0].est_cost is None
+    assert ranked[0].cost_complete is False
     assert ranked[1].candidate == "CC(=O)Oc1ccccc1C(=O)O"
     assert ranked[2].candidate == "c1ccccc1"
     assert ranked[2].best_price is None
+    assert ranked[2].cost_complete is False
     assert ranked[3].n_steps == 1
     assert ranked[3].cost_complete is True
     assert ranked[4].n_steps == 2
     assert ranked[4].cost_complete is False
+    # The unpriced boronic acid leaf is named as excluded from the route cost.
+    assert any(
+        "leaves excluded from route cost" in r and "no listed USD/g price" in r
+        for r in ranked[4].reasons
+    )
+    assert not any("leaves excluded from route cost" in r for r in ranked[3].reasons)
     assert ranked[6].inchikey is None
 
 
