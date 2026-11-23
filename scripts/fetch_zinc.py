@@ -5,7 +5,11 @@ from __future__ import annotations
 
 import argparse
 from pathlib import Path
+from typing import Optional
+
 import httpx
+
+from buyormake.canonical import atomic_download
 
 OUT_DIR = Path("data/zinc")
 
@@ -15,7 +19,7 @@ DEFAULT_TRANCHE_URLS = [
 ]
 
 
-def main() -> int:
+def main(argv: Optional[list[str]] = None) -> int:
     parser = argparse.ArgumentParser(
         description="Fetch ZINC SMILES tranches into data/zinc/ (not redistributed in repo)."
     )
@@ -25,7 +29,9 @@ def main() -> int:
         default=None,
         help="ZINC .smi/.smi.gz tranche URL(s) to fetch.",
     )
-    args = parser.parse_args()
+    parser.add_argument("--expected-sha256", default=None, help="Optional pinned SHA-256 hex digest.")
+    parser.add_argument("--force", action="store_true", help="Re-download even if present.")
+    args = parser.parse_args(argv)
 
     print(
         "ZINC license notice: free for academic/research use; redistribution of major portions "
@@ -35,17 +41,17 @@ def main() -> int:
     urls = args.url or DEFAULT_TRANCHE_URLS
     for url in urls:
         dest = OUT_DIR / Path(url).name
-        if dest.exists() and dest.stat().st_size > 0:
-            print(f"Already present: {dest}")
-            continue
         print(f"Downloading {url} -> {dest}")
         try:
-            with httpx.stream("GET", url, follow_redirects=True, timeout=60.0) as r:
-                r.raise_for_status()
-                with dest.open("wb") as f:
-                    for chunk in r.iter_bytes():
-                        f.write(chunk)
-        except httpx.HTTPError as exc:
+            sha = atomic_download(
+                url,
+                dest,
+                expected_sha256=args.expected_sha256 if len(urls) == 1 else None,
+                timeout=60.0,
+                force=args.force,
+            )
+            print(f"Saved {dest} ({dest.stat().st_size} bytes, sha256={sha})")
+        except (httpx.HTTPError, ValueError) as exc:
             print(f"Download failed for {url}: {exc}")
             return 1
     print(f"Done. Pass --stock {OUT_DIR / Path(urls[0]).name} to buy-or-make rank.")

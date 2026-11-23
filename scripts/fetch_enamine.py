@@ -6,6 +6,8 @@ from __future__ import annotations
 import argparse
 import sqlite3
 from pathlib import Path
+from typing import Optional
+
 from rdkit import Chem
 
 from buyormake.canonical import normalize_smiles
@@ -23,6 +25,14 @@ def import_sdf(sdf_path: Path, db_path: Path = DB_PATH, max_rows: int = 0) -> in
             inchikey TEXT NOT NULL,
             vendor TEXT NOT NULL,
             catalog_id TEXT,
+            pack_value REAL,
+            pack_unit TEXT,
+            purity TEXT,
+            price REAL,
+            currency TEXT,
+            price_basis TEXT NOT NULL DEFAULT 'unknown',
+            lead_time_days INTEGER,
+            in_stock INTEGER,
             source_id TEXT NOT NULL,
             source_url TEXT NOT NULL,
             fetched_utc TEXT NOT NULL,
@@ -35,6 +45,10 @@ def import_sdf(sdf_path: Path, db_path: Path = DB_PATH, max_rows: int = 0) -> in
     suppl = Chem.SDMolSupplier(str(sdf_path))
     batch = []
     count = 0
+    insert_sql = (
+        "INSERT INTO stock (inchikey, vendor, catalog_id, source_id, source_url, fetched_utc, license) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?)"
+    )
     for mol in suppl:
         if mol is None:
             continue
@@ -44,12 +58,11 @@ def import_sdf(sdf_path: Path, db_path: Path = DB_PATH, max_rows: int = 0) -> in
             continue
         cat_id = None
         for prop in ("Catalog_ID", "ID", "ENAMINE_ID", "_Name"):
-            if prop == "_Name" and mol.HasProp("_Name"):
-                cat_id = mol.GetProp("_Name").strip() or None
-                break
             if mol.HasProp(prop):
-                cat_id = mol.GetProp(prop).strip() or None
-                break
+                val = mol.GetProp(prop).strip()
+                if val:
+                    cat_id = val
+                    break
         batch.append(
             (
                 nm.inchikey,
@@ -63,25 +76,25 @@ def import_sdf(sdf_path: Path, db_path: Path = DB_PATH, max_rows: int = 0) -> in
         )
         count += 1
         if len(batch) >= 2000:
-            conn.executemany("INSERT INTO stock VALUES (?, ?, ?, ?, ?, ?, ?)", batch)
+            conn.executemany(insert_sql, batch)
             conn.commit()
             batch.clear()
         if max_rows and count >= max_rows:
             break
     if batch:
-        conn.executemany("INSERT INTO stock VALUES (?, ?, ?, ?, ?, ?, ?)", batch)
+        conn.executemany(insert_sql, batch)
         conn.commit()
     conn.close()
     return count
 
 
-def main() -> int:
+def main(argv: Optional[list[str]] = None) -> int:
     parser = argparse.ArgumentParser(
         description="Import a manually downloaded Enamine Building Blocks SDF into data/stock.sqlite."
     )
     parser.add_argument("--sdf", type=Path, default=None, help="Path to locally downloaded Enamine SDF.")
     parser.add_argument("--max-rows", type=int, default=0, help="Optional limit for testing.")
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     if args.sdf is None:
         print(

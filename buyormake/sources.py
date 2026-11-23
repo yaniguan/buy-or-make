@@ -5,9 +5,6 @@ from __future__ import annotations
 from .schema import Source
 
 CHECKED_DATE = "2026-11-18"
-# license_checked value for sources whose evidence page could not be fetched on CHECKED_DATE,
-# so their terms were corroborated second-hand rather than read from the live page.
-CHECKED_DATE_INDIRECT = f"{CHECKED_DATE} (indirect: evidence page unreachable; second-hand)"
 
 SOURCES: list[Source] = [
     Source(
@@ -53,7 +50,8 @@ SOURCES: list[Source] = [
             "ZINC is free to use for academic and research purposes; redistribution of major "
             "portions or commercial redistribution requires written permission."
         ),
-        license_checked=CHECKED_DATE_INDIRECT,
+        license_checked=CHECKED_DATE,
+        license_check_method="indirect",
         commercial_use_ok=True,
         redistribution_ok=False,
         attribution="Irwin & Shoichet Labs, UCSF (ZINC database)",

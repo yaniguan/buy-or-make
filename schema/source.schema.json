@@ -40,7 +40,17 @@
       "title": "License",
       "type": "string"
     },
+    "license_check_method": {
+      "default": "direct",
+      "enum": [
+        "direct",
+        "indirect"
+      ],
+      "title": "License Check Method",
+      "type": "string"
+    },
     "license_checked": {
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
       "title": "License Checked",
       "type": "string"
     },

@@ -145,18 +145,20 @@ def render_markdown(
 def main() -> int:
     parser = argparse.ArgumentParser(description="Run 20-molecule buy-or-make CPU demo.")
     parser.add_argument("--cache", type=Path, default=Path("data/demo_cache.sqlite"))
+    parser.add_argument("--scscore-weights", type=Path, default=None)
     parser.add_argument("--save-md", type=Path, default=Path("examples/demo_output.md"))
     parser.add_argument("--offline", action="store_true", help="Skip live PubChem cold run.")
     args = parser.parse_args()
 
     smiles_list = [smi for _, _, smi in CANDIDATES]
     cpu = _cpu_model()
+    extra_kw = {"scscore_weights": args.scscore_weights} if args.scscore_weights else {}
 
     if not args.offline and args.cache.exists():
         args.cache.unlink()
 
     t0 = time.perf_counter()
-    results_cold = cost_aware_rank(
+    cost_aware_rank(
         smiles_list,
         max_steps=2,
         backends=("local_stock", "pubchem"),
@@ -164,6 +166,7 @@ def main() -> int:
         offline=args.offline,
         cache_path=args.cache,
         stock_paths=[],
+        **extra_kw,
     )
     cold_sec = time.perf_counter() - t0
 
@@ -176,6 +179,7 @@ def main() -> int:
         offline=True,
         cache_path=args.cache,
         stock_paths=[],
+        **extra_kw,
     )
     cached_sec = time.perf_counter() - t1
 

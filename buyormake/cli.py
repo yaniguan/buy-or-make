@@ -8,19 +8,35 @@ import sys
 from pathlib import Path
 from typing import Optional
 
-from .rank import cost_aware_rank
-from .schema import export_json_schema
+from .cache import DEFAULT_CACHE_PATH
+from .rank import evaluate_candidates, filter_decisions_from_ranked
+from .schema import AvailabilityRecord, export_json_schema
 from .sources import SOURCES
 
 
-def _read_smiles_file(path: Path) -> list[str]:
-    lines: list[str] = []
+def _read_smiles_entries(path: Path) -> tuple[list[str], list[Optional[str]]]:
+    smiles_list: list[str] = []
+    names_list: list[Optional[str]] = []
     for raw in path.read_text(encoding="utf-8").splitlines():
         s = raw.strip()
         if not s or s.startswith("#"):
             continue
-        lines.append(s.split()[0])
-    return lines
+        parts = s.split(None, 1)
+        smiles_list.append(parts[0])
+        names_list.append(parts[1].strip() if len(parts) > 1 and parts[1].strip() else None)
+    return smiles_list, names_list
+
+
+def _read_smiles_file(path: Path) -> list[str]:
+    smiles_list, _ = _read_smiles_entries(path)
+    return smiles_list
+
+
+def _write_records_jsonl(records: list[AvailabilityRecord], out_path: Path) -> None:
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    with out_path.open("w", encoding="utf-8") as fout:
+        for rec in records:
+            fout.write(rec.model_dump_json() + "\n")
 
 
 def _format_price(q) -> str:
@@ -29,27 +45,77 @@ def _format_price(q) -> str:
     return f"{q.value:.2f} {q.unit}"
 
 
-def main(argv: Optional[list[str]] = None) -> int:
-    parser = argparse.ArgumentParser(prog="buy-or-make", description="Molecule buy-or-make triage.")
-    sub = parser.add_subparsers(dest="command", required=True)
-
-    p_rank = sub.add_parser("rank", help="Rank SMILES from a file.")
-    p_rank.add_argument("smiles_file", type=Path, help="Text file with one SMILES per line.")
-    p_rank.add_argument("--max-steps", type=int, default=3, help="Max retrosynthesis steps (default: 3).")
-    p_rank.add_argument(
+def _add_eval_arguments(p: argparse.ArgumentParser) -> None:
+    p.add_argument(
+        "smiles_file",
+        type=Path,
+        help="Text/.smi file with one SMILES (and optional whitespace-separated molecule ID/name) per line.",
+    )
+    p.add_argument("--max-steps", type=int, default=3, help="Max retrosynthesis steps (default: 3).")
+    p.add_argument(
         "--backends",
         default="local_stock,pubchem",
         help="Comma-separated stock backends (default: local_stock,pubchem).",
     )
-    p_rank.add_argument(
+    p.add_argument(
         "--route-backend",
         default="auto",
         choices=["auto", "template", "lookup", "aizynthfinder"],
         help="Retrosynthesis backend (default: auto).",
     )
-    p_rank.add_argument("--offline", action="store_true", help="Use local cache/files only (no HTTP).")
-    p_rank.add_argument("--stock", action="append", default=None, help="Additional local stock file(s).")
-    p_rank.add_argument("--json", action="store_true", dest="as_json", help="Output JSON.")
+    p.add_argument("--offline", action="store_true", help="Use local cache/files only (no HTTP).")
+    p.add_argument(
+        "--refresh-cache",
+        action="store_true",
+        help="Bypass existing cached API entries and fetch fresh vendor records.",
+    )
+    p.add_argument(
+        "--cache-max-age-days",
+        type=float,
+        default=None,
+        help="Maximum cache entry age in days before re-fetching in online mode (default: 30).",
+    )
+    p.add_argument(
+        "--cache-path",
+        type=Path,
+        default=DEFAULT_CACHE_PATH,
+        help="Path to SQLite API response cache (default: data/cache.sqlite).",
+    )
+    p.add_argument("--stock", action="append", default=None, help="Additional local stock file(s).")
+    p.add_argument(
+        "--records-out",
+        type=Path,
+        default=None,
+        help="Write sealed AvailabilityRecord objects as JSONL to this path.",
+    )
+    p.add_argument(
+        "--budget",
+        type=float,
+        default=None,
+        help="Optional per-gram budget threshold for proposal filtering.",
+    )
+    p.add_argument(
+        "--budget-currency",
+        default="USD",
+        help="Currency code for price comparison and --budget (default: USD).",
+    )
+    p.add_argument(
+        "--require-complete-cost",
+        action="store_true",
+        help="Reject unpriced buyables and incomplete-cost routes when --budget is set.",
+    )
+    p.add_argument("--json", action="store_true", dest="as_json", help="Output JSON.")
+
+
+def main(argv: Optional[list[str]] = None) -> int:
+    parser = argparse.ArgumentParser(prog="buy-or-make", description="Molecule buy-or-make triage.")
+    sub = parser.add_subparsers(dest="command", required=True)
+
+    p_rank = sub.add_parser("rank", help="Rank SMILES from a file (with optional --budget / --records-out).")
+    _add_eval_arguments(p_rank)
+
+    p_filter = sub.add_parser("filter", help="Filter candidate proposals under availability and --budget rules.")
+    _add_eval_arguments(p_filter)
 
     p_schema = sub.add_parser("export-schema", help="Export JSON Schema files to schema/.")
     p_schema.add_argument("--out", type=Path, default=Path("schema"), help="Output directory.")
@@ -68,34 +134,78 @@ def main(argv: Optional[list[str]] = None) -> int:
         for s in SOURCES:
             print(
                 f"{s.id:26s} status={s.status:10s} license={s.license:14s} "
-                f"redist={str(s.redistribution_ok):5s} comm={str(s.commercial_use_ok):5s}"
+                f"check={s.license_check_method:8s} redist={str(s.redistribution_ok):5s} "
+                f"comm={str(s.commercial_use_ok):5s}"
             )
         return 0
 
-    if args.command == "rank":
+    if args.command in {"rank", "filter"}:
         if not args.smiles_file.exists():
             print(f"error: file not found: {args.smiles_file}", file=sys.stderr)
             return 2
-        candidates = _read_smiles_file(args.smiles_file)
+        candidates, names = _read_smiles_entries(args.smiles_file)
         backends = tuple(b.strip() for b in args.backends.split(",") if b.strip())
-        results = cost_aware_rank(
+        ttl_sec = (
+            args.cache_max_age_days * 86400.0
+            if args.cache_max_age_days is not None
+            else None
+        )
+        results, records = evaluate_candidates(
             candidates,
+            candidate_names=names,
             max_steps=args.max_steps,
             backends=backends,
             route_backend=args.route_backend,
             offline=args.offline,
+            cache_path=args.cache_path,
+            cache_max_age_seconds=ttl_sec,
+            refresh_cache=args.refresh_cache,
             stock_paths=args.stock,
+            currency=args.budget_currency,
         )
+        if args.records_out is not None:
+            _write_records_jsonl(records, args.records_out)
+
+        use_filter = args.command == "filter" or args.budget is not None
+        if use_filter:
+            summary = filter_decisions_from_ranked(
+                results,
+                budget=args.budget,
+                budget_currency=args.budget_currency,
+                require_complete_cost=args.require_complete_cost,
+            )
+            if args.as_json:
+                print(json.dumps(summary.model_dump(mode="json"), indent=2))
+            else:
+                print(
+                    f"{'KEEP':5s} {'STATUS':9s} {'STEPS':5s} {'PRICE':16s} "
+                    f"{'EST_COST':16s} {'CANDIDATE'}"
+                )
+                for dec in summary.decisions:
+                    r = dec.result
+                    steps_s = "-" if r.n_steps is None else str(r.n_steps)
+                    label = f"{r.candidate} ({r.name})" if r.name else r.candidate
+                    print(
+                        f"{('yes' if dec.keep else 'no'):5s} {r.status:9s} {steps_s:5s} "
+                        f"{_format_price(r.best_price):16s} {_format_price(r.est_cost):16s} {label}"
+                    )
+            return 0
+
         if args.as_json:
             print(json.dumps([r.model_dump(mode="json") for r in results], indent=2))
         else:
             print(f"{'STATUS':9s} {'STEPS':5s} {'PRICE':16s} {'EST_COST':16s} {'SA':6s} {'CANDIDATE'}")
             for r in results:
                 steps_s = "-" if r.n_steps is None else str(r.n_steps)
-                sa_s = f"{r.sa_scores.sascore:.2f}" if (r.sa_scores and r.sa_scores.sascore is not None) else "-"
+                sa_s = (
+                    f"{r.sa_scores.sascore:.2f}"
+                    if (r.sa_scores and r.sa_scores.sascore is not None)
+                    else "-"
+                )
+                label = f"{r.candidate} ({r.name})" if r.name else r.candidate
                 print(
                     f"{r.status:9s} {steps_s:5s} {_format_price(r.best_price):16s} "
-                    f"{_format_price(r.est_cost):16s} {sa_s:6s} {r.candidate}"
+                    f"{_format_price(r.est_cost):16s} {sa_s:6s} {label}"
                 )
         return 0
 

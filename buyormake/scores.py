@@ -19,6 +19,7 @@ from .schema import SAScores
 DEFAULT_SCSCORE_WEIGHTS = Path("data/scscore/model.ckpt-10654.as_numpy.json.gz")
 
 _sascorer_mod = None
+_morgan_gen_cache: dict[tuple[int, int], object] = {}
 
 
 def _get_sascorer():
@@ -33,13 +34,13 @@ def _get_sascorer():
     return _sascorer_mod
 
 
-def compute_sascore(smiles: str) -> Optional[float]:
+def compute_sascore(smiles: str, *, mol: Optional[Chem.Mol] = None) -> Optional[float]:
     """Compute Ertl-Schuffenhauer SAscore (1=easy, 10=hard) via RDKit Contrib (BSD-3-Clause)."""
-    mol = Chem.MolFromSmiles(smiles)
-    if mol is None:
+    parsed = mol if mol is not None else Chem.MolFromSmiles(smiles)
+    if parsed is None:
         return None
     scorer = _get_sascorer()
-    return round(float(scorer.calculateScore(mol)), 4)
+    return round(float(scorer.calculateScore(parsed)), 4)
 
 
 class SCScoreModel:
@@ -68,25 +69,30 @@ class SCScoreModel:
         try:
             from rdkit.Chem import rdFingerprintGenerator
 
-            gen = rdFingerprintGenerator.GetMorganGenerator(
-                radius=self.fp_rad, fpSize=self.fp_len, includeChirality=True
-            )
-            return gen.GetFingerprintAsNumPy(mol).astype(np.float32)
+            key = (self.fp_rad, self.fp_len)
+            gen = _morgan_gen_cache.get(key)
+            if gen is None:
+                gen = rdFingerprintGenerator.GetMorganGenerator(
+                    radius=self.fp_rad, fpSize=self.fp_len, includeChirality=True
+                )
+                _morgan_gen_cache[key] = gen
+            return gen.GetFingerprintAsNumPy(mol).astype(np.float32)  # type: ignore[attr-defined]
         except Exception:
             bv = AllChem.GetMorganFingerprintAsBitVect(
                 mol, self.fp_rad, nBits=self.fp_len, useChirality=True
             )
             return np.array(bv, dtype=np.float32)
 
-    def score(self, smiles: str) -> Optional[float]:
+    def score(self, smiles: str, *, mol: Optional[Chem.Mol] = None) -> Optional[float]:
         if not self.load():
             return None
-        mol = Chem.MolFromSmiles(smiles)
-        if mol is None:
+        parsed = mol if mol is not None else Chem.MolFromSmiles(smiles)
+        if parsed is None:
             return None
-        x = self._mol_to_fp(mol)
+        x = self._mol_to_fp(parsed)
         if float(x.sum()) == 0.0:
-            return 0.0
+            # Minimum complexity floor in SCScore's [1.0, 5.0] domain (e.g. [H][H])
+            return 1.0
         for i in range(0, len(self.vars), 2):
             W = self.vars[i]
             b = self.vars[i + 1]
@@ -94,34 +100,46 @@ class SCScoreModel:
             if i < len(self.vars) - 2:
                 x = np.maximum(x, 0.0)
         scalar = float(np.asarray(x).item())
-        val = 1.0 + (self.score_scale - 1.0) / (1.0 + math.exp(-scalar))
+        if not math.isfinite(scalar):
+            return None
+        # Overflow-safe logistic sigmoid: 1 / (1 + exp(-z)) == 0.5 * (1 + tanh(0.5 * z))
+        sigmoid = 0.5 * (1.0 + math.tanh(0.5 * scalar))
+        val = 1.0 + (self.score_scale - 1.0) * sigmoid
         return round(val, 4)
 
 
-_default_scscore_model: Optional[SCScoreModel] = None
+_scscore_models: dict[Path, SCScoreModel] = {}
 
 
 def compute_scscore(
     smiles: str,
     weight_path: Path | str = DEFAULT_SCSCORE_WEIGHTS,
+    *,
+    mol: Optional[Chem.Mol] = None,
 ) -> Optional[float]:
     """Compute Coley SCScore (1..5) if weights exist locally; otherwise return None."""
-    global _default_scscore_model
     p = Path(weight_path)
-    if Path(weight_path) == DEFAULT_SCSCORE_WEIGHTS:
-        if _default_scscore_model is None:
-            _default_scscore_model = SCScoreModel(p)
-        return _default_scscore_model.score(smiles)
-    return SCScoreModel(p).score(smiles)
+    key = p.resolve() if p.exists() else p
+    model = _scscore_models.get(key)
+    if model is None:
+        model = SCScoreModel(p)
+        if p.exists():
+            _scscore_models[key] = model
+    return model.score(smiles, mol=mol)
 
 
 def compute_scores(
     smiles: str,
     scscore_weights: Path | str = DEFAULT_SCSCORE_WEIGHTS,
+    *,
+    mol: Optional[Chem.Mol] = None,
 ) -> SAScores:
     """Compute available SA scores; missing optional models remain None."""
+    parsed = mol if mol is not None else Chem.MolFromSmiles(smiles)
+    if parsed is None:
+        return SAScores(sascore=None, scscore=None, rascore=None)
     return SAScores(
-        sascore=compute_sascore(smiles),
-        scscore=compute_scscore(smiles, weight_path=scscore_weights),
+        sascore=compute_sascore(smiles, mol=parsed),
+        scscore=compute_scscore(smiles, weight_path=scscore_weights, mol=parsed),
         rascore=None,
     )
