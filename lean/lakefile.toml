@@ -1,0 +1,6 @@
+name = "buy_or_make_lean"
+version = "0.1.0"
+defaultTargets = ["BuyOrMakeLean"]
+
+[[lean_lib]]
+name = "BuyOrMakeLean"
