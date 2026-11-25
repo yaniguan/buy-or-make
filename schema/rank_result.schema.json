@@ -213,6 +213,17 @@
       ],
       "default": null
     },
+    "est_cost_yield_adjusted": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Quantity"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
     "evidence": {
       "items": {
         "type": "string"
@@ -231,6 +242,59 @@
       ],
       "default": null,
       "title": "Inchikey"
+    },
+    "inchikey_match": {
+      "default": "none",
+      "enum": [
+        "exact",
+        "salt_equivalent",
+        "stereoisomer_relaxed",
+        "none"
+      ],
+      "title": "Inchikey Match",
+      "type": "string"
+    },
+    "lead_time_days": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Lead Time Days"
+    },
+    "matched_offer_inchikeys": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Matched Offer Inchikeys",
+      "type": "array"
+    },
+    "min_outlay_cost": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Quantity"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "moq_pack_g": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Moq Pack G"
     },
     "n_steps": {
       "anyOf": [
@@ -255,6 +319,13 @@
       ],
       "default": null,
       "title": "Name"
+    },
+    "precursor_smiles": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Precursor Smiles",
+      "type": "array"
     },
     "reasons": {
       "items": {
@@ -283,6 +354,18 @@
       ],
       "title": "Status",
       "type": "string"
+    },
+    "step_yield_assumed": {
+      "default": 1.0,
+      "title": "Step Yield Assumed",
+      "type": "number"
+    },
+    "stereoisomer_inchikeys_in_stock": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Stereoisomer Inchikeys In Stock",
+      "type": "array"
     }
   },
   "required": [

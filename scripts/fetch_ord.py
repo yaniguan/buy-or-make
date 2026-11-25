@@ -21,6 +21,9 @@ DB_PATH = Path("data/reactions.sqlite")
 
 
 def _init_db(conn: sqlite3.Connection) -> None:
+    conn.execute("PRAGMA busy_timeout = 30000")
+    conn.execute("PRAGMA journal_mode = WAL")
+    conn.execute("PRAGMA synchronous = NORMAL")
     conn.execute(
         """
         CREATE TABLE IF NOT EXISTS reactions (

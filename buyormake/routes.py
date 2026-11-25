@@ -5,16 +5,18 @@ from __future__ import annotations
 import json
 import os
 import sqlite3
+import threading
 from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, Optional
+from typing import Callable, Mapping, Optional
 
 from rdkit import Chem
 from rdkit.Chem import rdChemReactions
 
+from .cache import open_readonly_sqlite
 from .canonical import NormalizedMol, normalize_smiles
-from .cost import EST_COST_METHOD, estimate_route_cost_detailed, route_cost_method
+from .cost import EST_COST_METHOD, estimate_route_cost_bounds, route_cost_method
 from .schema import Offer, Route, RouteStep
 
 DEFAULT_REACTION_DB = Path("data/reactions.sqlite")
@@ -22,7 +24,8 @@ DEFAULT_REACTION_DB = Path("data/reactions.sqlite")
 # Curated open SMARTS retrosynthesis disconnections (product >> reactants).
 # Every bimolecular template enforces `!@` on the cleaved bond so endocyclic bonds are never
 # split into atom-duplicating fragments; monocyclic lactones/lactams use dedicated single-component
-# ring-opening SMARTS (`@` with component grouping).
+# ring-opening SMARTS (`@` with component grouping). Williamson SN2 templates restrict electrophile
+# carbons to methyl, primary, or unhindered secondary sp3 centers (`H3,H2,H1`, non-tertiary).
 RETRO_TEMPLATES: list[tuple[str, str]] = [
     (
         "amide_coupling_secondary",
@@ -62,11 +65,11 @@ RETRO_TEMPLATES: list[tuple[str, str]] = [
     ),
     (
         "williamson_aryl_ether",
-        "[c:1][O:2]!@[CX4:3]>>[c:1][OH1:2].[CX4:3]Br",
+        "[c:1][O:2]!@[CX4;H3,H2,H1;!$(C([#6])([#6])[#6]):3]>>[c:1][OH1:2].[CX4:3]Br",
     ),
     (
         "williamson_alkyl_ether",
-        "[CX4:1][O:2]!@[CX4:3]>>[CX4:1][OH1:2].[CX4:3]Br",
+        "[CX4:1][O:2]!@[CX4;H3,H2,H1;!$(C([#6])([#6])[#6]):3]>>[CX4:1][OH1:2].[CX4:3]Br",
     ),
     (
         "reductive_amination_secondary",
@@ -94,6 +97,10 @@ RETRO_TEMPLATES: list[tuple[str, str]] = [
     ),
 ]
 
+UNIMOLECULAR_RING_OPENING_TEMPLATES: frozenset[str] = frozenset(
+    {"lactone_ring_opening", "lactam_ring_opening"}
+)
+
 # Exact heavy-atom leaving-group delta (sum(reactant heavy atoms) - product heavy atoms) per template.
 RETRO_TEMPLATE_DELTAS: dict[str, dict[str, int]] = {
     "amide_coupling_secondary": {"O": 1},
@@ -118,6 +125,107 @@ RETRO_TEMPLATE_DELTAS: dict[str, dict[str, int]] = {
 _CATALYST_METALS = {"Pd", "Pt", "Rh", "Ir", "Ru", "Ni", "Au"}
 _INORGANIC_COUNTER_METALS = {"Li", "Na", "K", "Rb", "Cs", "Ag"}
 
+# Pre-compiled chemoselectivity / homopolymerization SMARTS guards
+_PAT_UNPROTECTED_AMINE = Chem.MolFromSmarts(
+    "[N;!a;H2,H1;!$(NC(=[O,S]));!$(NS(=O)=O);!$(N=[C,N,O]);!$(N[N,O])]"
+)
+_PAT_UNPROTECTED_OH = Chem.MolFromSmarts(
+    "[OH1;!$(OC(=[O,S]));!$(OS(=O));!$(OB);!$(OP);!$(ON)]"
+)
+_PAT_CARBOXYLIC_ACID = Chem.MolFromSmarts("[CX3](=O)[OH1]")
+_PAT_REACTIVE_ARYL_VINYL_HAL = Chem.MolFromSmarts("[c,CX3][Br,I]")
+_PAT_BORONIC_ACID = Chem.MolFromSmarts("[#6]B([OH])[OH]")
+_PAT_ALDEHYDE = Chem.MolFromSmarts("[CX3H1](=O)[#6,#1]")
+
+
+def _has_chemoselectivity_conflict(tpl_name: str, frag_mols: list[Chem.Mol]) -> bool:
+    """Return True if disconnected reactants carry unprotected self-reacting or bis-coupling groups."""
+    if len(frag_mols) < 2:
+        return False
+    f0, f1 = frag_mols[0], frag_mols[1]
+
+    if tpl_name in {"amide_coupling_secondary", "amide_coupling_tertiary"}:
+        # Acyl donor (f0) must not carry an unprotected primary/secondary amine (AB self-condensation)
+        # or multiple carboxylic acids; amine nucleophile (f1) must not have >=2 competing free amines.
+        if f0.HasSubstructMatch(_PAT_UNPROTECTED_AMINE):
+            return True
+        if len(f0.GetSubstructMatches(_PAT_CARBOXYLIC_ACID)) >= 2:
+            return True
+        if len(f1.GetSubstructMatches(_PAT_UNPROTECTED_AMINE)) >= 2:
+            return True
+        return False
+
+    if tpl_name == "esterification":
+        # Carboxylic acid donor (f0) must not carry unprotected amine or alcohol/phenol (lactonization/polyester)
+        if f0.HasSubstructMatch(_PAT_UNPROTECTED_AMINE) or f0.HasSubstructMatch(_PAT_UNPROTECTED_OH):
+            return True
+        return False
+
+    if tpl_name in {"sulfonamide_secondary", "sulfonamide_tertiary"}:
+        if f0.HasSubstructMatch(_PAT_UNPROTECTED_AMINE) or f0.HasSubstructMatch(_PAT_UNPROTECTED_OH):
+            return True
+        if len(f1.GetSubstructMatches(_PAT_UNPROTECTED_AMINE)) >= 2:
+            return True
+        return False
+
+    if tpl_name == "urea_formation":
+        # Isocyanate (f0) self-reacts with unprotected amines or alcohols
+        if f0.HasSubstructMatch(_PAT_UNPROTECTED_AMINE) or f0.HasSubstructMatch(_PAT_UNPROTECTED_OH):
+            return True
+        return False
+
+    if tpl_name == "carbamate_formation":
+        # Isocyanate (f1) self-reacts with unprotected amines or alcohols
+        if f1.HasSubstructMatch(_PAT_UNPROTECTED_AMINE) or f1.HasSubstructMatch(_PAT_UNPROTECTED_OH):
+            return True
+        return False
+
+    if tpl_name in {"suzuki_biaryl", "suzuki_aryl_alkenyl"}:
+        # Electrophile (f0 = Ar-Br) must not carry >=2 reactive [c,CX3][Br,I] sites (bis-coupling) or -B(O)O;
+        # Boronic acid (f1) must not carry reactive [c,CX3][Br,I] (AB Suzuki homopolymerization) or >=2 -B(O)O.
+        if len(f0.GetSubstructMatches(_PAT_REACTIVE_ARYL_VINYL_HAL)) >= 2:
+            return True
+        if f0.HasSubstructMatch(_PAT_BORONIC_ACID):
+            return True
+        if f1.HasSubstructMatch(_PAT_REACTIVE_ARYL_VINYL_HAL):
+            return True
+        if len(f1.GetSubstructMatches(_PAT_BORONIC_ACID)) >= 2:
+            return True
+        return False
+
+    if tpl_name in {"buchwald_hartwig_cn", "buchwald_hartwig_cn_tertiary"}:
+        # Aryl bromide (f0) must not carry unprotected amine (AB self-amination) or >=2 reactive Ar-Br/I sites
+        if f0.HasSubstructMatch(_PAT_UNPROTECTED_AMINE):
+            return True
+        if len(f0.GetSubstructMatches(_PAT_REACTIVE_ARYL_VINYL_HAL)) >= 2:
+            return True
+        return False
+
+    if tpl_name in {"reductive_amination_secondary", "reductive_amination_tertiary"}:
+        # Aldehyde (f0) must not carry an unprotected amine (self-imine polymerization) or >=2 aldehydes
+        if f0.HasSubstructMatch(_PAT_UNPROTECTED_AMINE):
+            return True
+        if len(f0.GetSubstructMatches(_PAT_ALDEHYDE)) >= 2:
+            return True
+        return False
+
+    if tpl_name in {"williamson_aryl_ether", "williamson_alkyl_ether"}:
+        # Alkyl bromide (f1) must not be tertiary/bridgehead (E2 elimination) or carry self-alkylating -NH/-OH
+        if f1.HasSubstructMatch(_PAT_UNPROTECTED_AMINE) or f1.HasSubstructMatch(_PAT_UNPROTECTED_OH):
+            return True
+        ring_info = f1.GetRingInfo()
+        for atom in f1.GetAtoms():
+            if atom.GetAtomicNum() == 35:  # Br
+                for nbr in atom.GetNeighbors():
+                    if nbr.GetAtomicNum() == 6:
+                        if nbr.GetTotalNumHs() == 0:
+                            return True
+                        if ring_info.NumAtomRings(nbr.GetIdx()) >= 2:
+                            return True
+        return False
+
+    return False
+
 
 def _heavy_element_counts(mol: Chem.Mol) -> Counter[str]:
     return Counter(atom.GetSymbol() for atom in mol.GetAtoms() if atom.GetAtomicNum() > 1)
@@ -126,17 +234,7 @@ def _heavy_element_counts(mol: Chem.Mol) -> Counter[str]:
 def parse_reaction_smiles_for_indexing(
     rxn_smi: str,
 ) -> list[tuple[NormalizedMol, list[str], list[str]]]:
-    """Extract `(product_mol, stoichiometric_reactants, spectator_agents)` per product in `rxn_smi`.
-
-    - Explicit agents between `>`...`>` are always placed in `spectator_agents`.
-    - When atom-mapping numbers are present on a product (`[C:1]`), only reactants sharing at least
-      one mapped heavy atom with that product are kept in `stoichiometric_reactants`; unmapped
-      species (solvents like THF/DMF, catalysts like Pd(PPh3)4, inorganic bases/salts) are moved
-      to `spectator_agents`.
-    - When atom-mapping numbers are absent, transition-metal catalysts (`Pd`, `Pt`, `Rh`, `Ir`,
-      `Ru`, `Ni`, `Au`) and inorganic zero-carbon salts whose metal does not appear in the product
-      are moved to `spectator_agents`.
-    """
+    """Extract `(product_mol, stoichiometric_reactants, spectator_agents)` per product in `rxn_smi`."""
     if not rxn_smi or ">>" not in rxn_smi:
         return []
     lhs, rhs = rxn_smi.split(">>", 1)
@@ -244,22 +342,25 @@ class ReactionLookupBackend:
 
     def __init__(self, db_path: Path | str = DEFAULT_REACTION_DB) -> None:
         self.db_path = Path(db_path)
+        self._lock = threading.RLock()
         self._conn: Optional[sqlite3.Connection] = None
         if self.db_path.exists():
-            self._conn = sqlite3.connect(str(self.db_path))
+            self._conn = open_readonly_sqlite(self.db_path)
 
     @property
     def available(self) -> bool:
-        return self._conn is not None
+        with self._lock:
+            return self._conn is not None
 
     def one_step(self, inchikey: str, canonical_smiles: str, limit: int = 10) -> list[RouteStep]:
-        if self._conn is None:
-            return []
-        rows = self._conn.execute(
-            "SELECT reactants_json, reaction_smiles, reference, source "
-            "FROM reactions WHERE product_inchikey = ? LIMIT ?",
-            (inchikey, limit),
-        ).fetchall()
+        with self._lock:
+            if self._conn is None:
+                return []
+            rows = self._conn.execute(
+                "SELECT reactants_json, reaction_smiles, reference, source "
+                "FROM reactions WHERE product_inchikey = ? LIMIT ?",
+                (inchikey, limit),
+            ).fetchall()
         steps: list[RouteStep] = []
         seen: set[tuple[str, ...]] = set()
         for r_json, rxn_smi, ref, src in rows:
@@ -290,9 +391,10 @@ class ReactionLookupBackend:
         return steps
 
     def close(self) -> None:
-        if self._conn is not None:
-            self._conn.close()
-            self._conn = None
+        with self._lock:
+            if self._conn is not None:
+                self._conn.close()
+                self._conn = None
 
 
 class TemplateFallbackBackend:
@@ -329,6 +431,7 @@ class TemplateFallbackBackend:
 
             for prod_tuple in outcomes:
                 reactants: list[str] = []
+                frag_mols: list[Chem.Mol] = []
                 frag_heavy_sizes: list[int] = []
                 frag_counts: Counter[str] = Counter()
                 ok = True
@@ -349,17 +452,18 @@ class TemplateFallbackBackend:
                     if nm.num_heavy_atoms < 2 or nm.mol is None:
                         ok = False
                         break
+                    frag_mols.append(nm.mol)
                     frag_heavy_sizes.append(nm.num_heavy_atoms)
                     frag_counts.update(_heavy_element_counts(nm.mol))
                     reactants.append(nm.canonical_smiles)
 
                 if not ok or not reactants:
                     continue
-                # Strict element/atom conservation guard against ring-cleavage atom duplication
                 if frag_counts != expected_counts:
                     continue
-                # Prevent degenerate expansions that blow up size without progress
                 if any(sz >= parent_heavy + 3 for sz in frag_heavy_sizes):
+                    continue
+                if _has_chemoselectivity_conflict(tpl.name, frag_mols):
                     continue
                 key = tuple(sorted(reactants))
                 if key in seen_sets:
@@ -437,7 +541,6 @@ class AiZynthFinderBackend:
                 continue
             raw_score = route_dict.get("score")
             if isinstance(raw_score, dict):
-                # Newer AiZynthFinder versions may store {"state score": 0.98, ...}
                 raw_score = next(
                     (float(v) for v in raw_score.values() if isinstance(v, (int, float))),
                     None,
@@ -528,15 +631,43 @@ def _walk_aizynth_tree(
 OfferLookupFn = Callable[[str, str], list[Offer]]
 
 
+def _resolve_leaf_offers(
+    nm: NormalizedMol,
+    offer_cache: dict[str, list[Offer]],
+    offer_lookup: OfferLookupFn,
+    *,
+    desalt_fallback: bool = True,
+) -> list[Offer]:
+    if nm.inchikey not in offer_cache:
+        offs = list(offer_lookup(nm.inchikey, nm.canonical_smiles))
+        if not offs and desalt_fallback and (
+            "." in nm.canonical_smiles
+            or "+" in nm.canonical_smiles
+            or "-" in nm.canonical_smiles
+        ):
+            p_nm = normalize_smiles(nm.canonical_smiles, desalt=True)
+            if p_nm is not None and p_nm.inchikey != nm.inchikey:
+                if p_nm.inchikey not in offer_cache:
+                    offer_cache[p_nm.inchikey] = list(
+                        offer_lookup(p_nm.inchikey, p_nm.canonical_smiles)
+                    )
+                offs = list(offer_cache[p_nm.inchikey])
+        offer_cache[nm.inchikey] = offs
+    return offer_cache[nm.inchikey]
+
+
 def _score_route_for_selection(route: Route) -> tuple:
     all_ok = 0 if (route.leaves and all(route.leaves_purchasable)) else 1
     cost_tier = 2
     cost_val = 0.0
+    yield_cost_val = 0.0
     if route.est_cost is not None and route.est_cost.value is not None:
         cost_tier = 0 if route.est_cost_complete else 1
         cost_val = route.est_cost.value
+    if route.est_cost_yield_adjusted is not None and route.est_cost_yield_adjusted.value is not None:
+        yield_cost_val = route.est_cost_yield_adjusted.value
     neg_score = -float(route.score) if route.score is not None else 0.0
-    return (all_ok, route.n_steps, cost_tier, cost_val, neg_score, len(route.leaves))
+    return (all_ok, route.n_steps, cost_tier, cost_val, yield_cost_val, neg_score, len(route.leaves))
 
 
 def _build_route(
@@ -550,6 +681,12 @@ def _build_route(
     *,
     score: Optional[float] = None,
     currency: str = "USD",
+    desalt_fallback: bool = True,
+    default_step_yield: float = 1.0,
+    stoich_excess: float = 1.0,
+    target_scale_g: float = 1.0,
+    max_pack_multiple: Optional[float] = None,
+    offer_mol_weights: Optional[Mapping[str, float]] = None,
 ) -> Route:
     leaves_purchasable: list[bool] = []
     leaf_offers_by_ik: dict[str, list[Offer]] = {}
@@ -558,14 +695,23 @@ def _build_route(
         if nm is None:
             leaves_purchasable.append(False)
             continue
-        if nm.inchikey not in offer_cache:
-            offer_cache[nm.inchikey] = offer_lookup(nm.inchikey, nm.canonical_smiles)
-        offs = offer_cache[nm.inchikey]
+        offs = _resolve_leaf_offers(
+            nm, offer_cache, offer_lookup, desalt_fallback=desalt_fallback
+        )
         leaf_offers_by_ik[nm.inchikey] = offs
         leaves_purchasable.append(len(offs) > 0)
 
-    est_cost, est_complete, skipped = estimate_route_cost_detailed(
-        target_smiles, leaves, leaf_offers_by_ik, currency=currency
+    breakdown = estimate_route_cost_bounds(
+        target_smiles,
+        leaves,
+        leaf_offers_by_ik,
+        currency=currency,
+        steps=steps,
+        default_step_yield=default_step_yield,
+        stoich_excess=stoich_excess,
+        target_scale_g=target_scale_g,
+        max_pack_multiple=max_pack_multiple,
+        offer_mol_weights=offer_mol_weights,
     )
     return Route(
         target_inchikey=target_inchikey,
@@ -575,9 +721,16 @@ def _build_route(
         leaves_purchasable=leaves_purchasable,
         method=method,
         score=score,
-        est_cost=est_cost,
-        est_cost_method=route_cost_method(skipped),
-        est_cost_complete=est_complete,
+        est_cost=breakdown.est_cost,
+        est_cost_method=route_cost_method(
+            breakdown.skipped,
+            default_step_yield=default_step_yield,
+            stoich_excess=stoich_excess,
+        ),
+        est_cost_complete=breakdown.est_cost_complete,
+        est_cost_yield_adjusted=breakdown.yield_adjusted_cost,
+        min_outlay_cost=breakdown.min_outlay_cost,
+        step_yield_assumed=default_step_yield,
     )
 
 
@@ -589,6 +742,13 @@ def _expand_lookup_routes(
     offer_cache: dict[str, list[Offer]],
     offer_lookup: OfferLookupFn,
     currency: str,
+    *,
+    desalt_fallback: bool = True,
+    default_step_yield: float = 1.0,
+    stoich_excess: float = 1.0,
+    target_scale_g: float = 1.0,
+    max_pack_multiple: Optional[float] = None,
+    offer_mol_weights: Optional[Mapping[str, float]] = None,
 ) -> list[Route]:
     """Bounded multi-step reaction lookup expansion up to `min(max_steps, 3)` steps."""
     found: list[Route] = []
@@ -607,6 +767,12 @@ def _expand_lookup_routes(
             offer_cache,
             offer_lookup,
             currency=currency,
+            desalt_fallback=desalt_fallback,
+            default_step_yield=default_step_yield,
+            stoich_excess=stoich_excess,
+            target_scale_g=target_scale_g,
+            max_pack_multiple=max_pack_multiple,
+            offer_mol_weights=offer_mol_weights,
         )
         found.append(r1)
         if r1.leaves and all(r1.leaves_purchasable):
@@ -622,7 +788,9 @@ def _expand_lookup_routes(
             missing_idx = [
                 idx
                 for idx, leaf in enumerate(current_leaves)
-                if not _is_purchasable(leaf, offer_cache, offer_lookup)
+                if not _is_purchasable(
+                    leaf, offer_cache, offer_lookup, desalt_fallback=desalt_fallback
+                )
             ]
             if len(missing_idx) != 1:
                 continue
@@ -647,6 +815,12 @@ def _expand_lookup_routes(
                     offer_cache,
                     offer_lookup,
                     currency=currency,
+                    desalt_fallback=desalt_fallback,
+                    default_step_yield=default_step_yield,
+                    stoich_excess=stoich_excess,
+                    target_scale_g=target_scale_g,
+                    max_pack_multiple=max_pack_multiple,
+                    offer_mol_weights=offer_mol_weights,
                 )
                 found.append(r_multi)
                 if r_multi.leaves and all(r_multi.leaves_purchasable):
@@ -674,6 +848,12 @@ def find_routes(
     offer_cache: Optional[dict[str, list[Offer]]] = None,
     target_mol: Optional[Chem.Mol] = None,
     currency: str = "USD",
+    desalt_fallback: bool = True,
+    default_step_yield: float = 1.0,
+    stoich_excess: float = 1.0,
+    target_scale_g: float = 1.0,
+    max_pack_multiple: Optional[float] = None,
+    offer_mol_weights: Optional[Mapping[str, float]] = None,
 ) -> list[Route]:
     """Search for retrosynthetic routes up to max_steps using the selected backend."""
     if max_steps <= 0:
@@ -695,6 +875,12 @@ def find_routes(
                 offer_lookup,
                 score=r.score,
                 currency=currency,
+                desalt_fallback=desalt_fallback,
+                default_step_yield=default_step_yield,
+                stoich_excess=stoich_excess,
+                target_scale_g=target_scale_g,
+                max_pack_multiple=max_pack_multiple,
+                offer_mol_weights=offer_mol_weights,
             )
             routes.append(rebuilt)
         has_solved_az = any(r.leaves and all(r.leaves_purchasable) for r in routes)
@@ -712,6 +898,12 @@ def find_routes(
                 offer_cache=cache,
                 offer_lookup=offer_lookup,
                 currency=currency,
+                desalt_fallback=desalt_fallback,
+                default_step_yield=default_step_yield,
+                stoich_excess=stoich_excess,
+                target_scale_g=target_scale_g,
+                max_pack_multiple=max_pack_multiple,
+                offer_mol_weights=offer_mol_weights,
             )
         )
         if route_backend == "lookup":
@@ -720,7 +912,6 @@ def find_routes(
 
     if route_backend in {"auto", "template"}:
         tb = template_backend or TemplateFallbackBackend()
-        # Cap heuristic SMARTS expansion at 2 steps to stay fast and avoid combinatorial noise
         effective_depth = min(max_steps, 2)
         method_label = (
             "template_fallback (heuristic RDKit SMARTS disconnections, max 2 steps; "
@@ -739,20 +930,26 @@ def find_routes(
                 cache,
                 offer_lookup,
                 currency=currency,
+                desalt_fallback=desalt_fallback,
+                default_step_yield=default_step_yield,
+                stoich_excess=stoich_excess,
+                target_scale_g=target_scale_g,
+                max_pack_multiple=max_pack_multiple,
+                offer_mol_weights=offer_mol_weights,
             )
             routes.append(r1)
             if r1.leaves and all(r1.leaves_purchasable):
                 solved_1step = True
 
-        # If not solved in 1 step and depth >= 2, try disconnecting non-purchasable leaves
         if not solved_1step and effective_depth >= 2:
             for st1 in step1_list[:6]:
                 missing_idx = [
                     idx
                     for idx, leaf in enumerate(st1.reactants)
-                    if not _is_purchasable(leaf, cache, offer_lookup)
+                    if not _is_purchasable(
+                        leaf, cache, offer_lookup, desalt_fallback=desalt_fallback
+                    )
                 ]
-                # Only expand if exactly 1 reactant is missing (keeps 2-step search crisp and clean)
                 if len(missing_idx) != 1:
                     continue
                 m_idx = missing_idx[0]
@@ -772,10 +969,14 @@ def find_routes(
                         cache,
                         offer_lookup,
                         currency=currency,
+                        desalt_fallback=desalt_fallback,
+                        default_step_yield=default_step_yield,
+                        stoich_excess=stoich_excess,
+                        target_scale_g=target_scale_g,
+                        max_pack_multiple=max_pack_multiple,
+                        offer_mol_weights=offer_mol_weights,
                     )
                     routes.append(r2)
-                    # Stop at the first solved second step for this disconnection: the 2-step
-                    # search is not exhaustive, so est_cost is for a found route, not the cheapest.
                     if r2.leaves and all(r2.leaves_purchasable):
                         break
 
@@ -787,10 +988,11 @@ def _is_purchasable(
     smiles: str,
     offer_cache: dict[str, list[Offer]],
     offer_lookup: OfferLookupFn,
+    *,
+    desalt_fallback: bool = True,
 ) -> bool:
     nm = normalize_smiles(smiles)
     if nm is None:
         return False
-    if nm.inchikey not in offer_cache:
-        offer_cache[nm.inchikey] = offer_lookup(nm.inchikey, nm.canonical_smiles)
-    return len(offer_cache[nm.inchikey]) > 0
+    offs = _resolve_leaf_offers(nm, offer_cache, offer_lookup, desalt_fallback=desalt_fallback)
+    return len(offs) > 0

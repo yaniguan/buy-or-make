@@ -294,3 +294,33 @@ def test_aizynth_score_preservation_multi_or_node_and_auto_fallthrough() -> None
     )
     assert any(r.leaves and all(r.leaves_purchasable) for r in auto_routes)
     assert auto_routes[0].steps[0].source == "template_fallback"
+
+
+def test_retro_templates_guard_tertiary_sn2_competing_nucleophiles_and_ab_suzuki() -> None:
+    tb = TemplateFallbackBackend()
+
+    # 1. Tertiary & bridgehead SN2 E2-elimination traps must NEVER propose t-BuBr or 1-AdBr
+    assert tb.one_step("CC(C)(C)Oc1ccccc1") == []
+    assert tb.one_step("O(c1ccccc1)C12CC3CC(CC(C3)C1)C2") == []
+
+    # Primary/secondary Williamson ethers and t-BuO-Et (via EtBr + t-BuOH) still disconnect cleanly
+    phenetole_sets = [set(s.reactants) for s in tb.one_step("CCOc1ccccc1")]
+    assert {"Oc1ccccc1", "CCBr"} in phenetole_sets
+    tbue_sets = [set(s.reactants) for s in tb.one_step("CCOC(C)(C)C")]
+    assert {"CC(C)(C)O", "CCBr"} in tbue_sets
+
+    # 2. Unprotected competing amine on carboxylic acid acyl donor (4-aminobenzanilide) rejected
+    amide_reactant_sets = [set(s.reactants) for s in tb.one_step("Nc1ccc(C(=O)Nc2ccccc2)cc1")]
+    assert {"Nc1ccc(C(=O)O)cc1", "Nc1ccccc1"} not in amide_reactant_sets
+
+    # 3. AB-monomer Suzuki homopolymerization (4-bromophenylboronic acid) & symmetric 1,4-dibromobenzene rejected
+    suzuki_reactant_sets = [set(s.reactants) for s in tb.one_step("Brc1ccc(-c2ccccc2)cc1")]
+    assert {"Brc1ccccc1", "OB(O)c1ccc(Br)cc1"} not in suzuki_reactant_sets
+    assert {"Brc1ccc(Br)cc1", "OB(O)c1ccccc1"} not in suzuki_reactant_sets
+
+    # 4-fluorobiphenyl (non-reactive Ar-F) still disconnects cleanly via Suzuki
+    f_biphenyl_sets = [set(s.reactants) for s in tb.one_step("Fc1ccc(-c2ccccc2)cc1")]
+    assert {"Fc1ccc(Br)cc1", "OB(O)c1ccccc1"} in f_biphenyl_sets or {
+        "Brc1ccccc1",
+        "OB(O)c1ccc(F)cc1",
+    } in f_biphenyl_sets

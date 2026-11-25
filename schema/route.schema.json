@@ -190,6 +190,17 @@
       "title": "Est Cost Method",
       "type": "string"
     },
+    "est_cost_yield_adjusted": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Quantity"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
     "leaves": {
       "items": {
         "type": "string"
@@ -208,6 +219,17 @@
       "title": "Method",
       "type": "string"
     },
+    "min_outlay_cost": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Quantity"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
     "n_steps": {
       "title": "N Steps",
       "type": "integer"
@@ -223,6 +245,11 @@
       ],
       "default": null,
       "title": "Score"
+    },
+    "step_yield_assumed": {
+      "default": 1.0,
+      "title": "Step Yield Assumed",
+      "type": "number"
     },
     "steps": {
       "items": {

@@ -5,40 +5,158 @@ Computes exact non-dominated 3D Pareto frontiers over
 `(usd_per_g, lead_time_days, pmi_kg_per_kg)` while strictly enforcing:
 1. `null`-price and incomplete-cost abstention (`unpriced_never_passes_budget`),
 2. Homogeneous `USD/g` unit verification,
-3. Acyclic bond cleavage and exact heavy-atom conservation (`BuyOrMakeLean`).
+3. Acyclic bond cleavage and 13-channel heavy-atom conservation (`BuyOrMakeLean.AtomVec`).
 """
 
 from __future__ import annotations
 
 import math
-from collections.abc import Sequence
+from collections import Counter
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 
 import numpy as np
+from rdkit import Chem
+
+_METAL_SYMBOLS: frozenset[str] = frozenset(
+    {
+        "Li", "Be", "Na", "Mg", "Al", "K", "Ca", "Sc", "Ti", "V", "Cr", "Mn", "Fe", "Co",
+        "Ni", "Cu", "Zn", "Ga", "Rb", "Sr", "Y", "Zr", "Nb", "Mo", "Tc", "Ru", "Rh", "Pd",
+        "Ag", "Cd", "In", "Sn", "Cs", "Ba", "La", "Ce", "Pr", "Nd", "Pm", "Sm", "Eu", "Gd",
+        "Tb", "Dy", "Ho", "Er", "Tm", "Yb", "Lu", "Hf", "Ta", "W", "Re", "Os", "Ir", "Pt",
+        "Au", "Hg", "Tl", "Pb", "Bi", "Fr", "Ra", "Ac", "Th", "Pa", "U",
+    }
+)
 
 
 @dataclass(frozen=True)
 class AtomCountVec:
-    """Exact heavy-atom vector (C, N, O, S, Hal) mirroring `BuyOrMakeLean.AtomVec`."""
+    """Exact 13-channel heavy-atom vector mirroring `BuyOrMakeLean.AtomVec`.
 
-    c: int
-    n: int
-    o: int
-    s: int
-    hal: int
+    Separates `F`, `Cl`, `Br`, `I` individually and tracks `B`, `P`, `Si`, `metal`,
+    and `other_heavy` (plus exact `extra_elements` identity when constructed from SMILES)
+    so cross-halogen swaps and missing Suzuki boron / organometallic synthons are caught.
+    """
+
+    c: int = 0
+    n: int = 0
+    o: int = 0
+    s: int = 0
+    f: int = 0
+    cl: int = 0
+    br: int = 0
+    i: int = 0
+    b: int = 0
+    p: int = 0
+    si: int = 0
+    metal: int = 0
+    other_heavy: int = 0
+    extra_elements: tuple[tuple[str, int], ...] = ()
+
+    @property
+    def hal(self) -> int:
+        """Total halogen count (`F + Cl + Br + I`) for convenience inspection."""
+        return self.f + self.cl + self.br + self.i
 
     def add(self, other: AtomCountVec) -> AtomCountVec:
+        merged_extra: Counter[str] = Counter(dict(self.extra_elements))
+        for sym, cnt in other.extra_elements:
+            merged_extra[sym] += cnt
+        extra_tuple = tuple(sorted((k, int(v)) for k, v in merged_extra.items() if v != 0))
         return AtomCountVec(
             c=self.c + other.c,
             n=self.n + other.n,
             o=self.o + other.o,
             s=self.s + other.s,
-            hal=self.hal + other.hal,
+            f=self.f + other.f,
+            cl=self.cl + other.cl,
+            br=self.br + other.br,
+            i=self.i + other.i,
+            b=self.b + other.b,
+            p=self.p + other.p,
+            si=self.si + other.si,
+            metal=self.metal + other.metal,
+            other_heavy=self.other_heavy + other.other_heavy,
+            extra_elements=extra_tuple,
         )
 
 
+def atom_vec_from_counts(counts: Mapping[str, int]) -> AtomCountVec:
+    """Project an element-symbol mapping (e.g., `RETRO_TEMPLATE_DELTAS['suzuki_biaryl']`) to `AtomCountVec`."""
+    c = n = o = s = f = cl = br = i = b = p = si = metal = other_heavy = 0
+    extra: Counter[str] = Counter()
+    for raw_sym, raw_cnt in counts.items():
+        cnt = int(raw_cnt)
+        if cnt == 0:
+            continue
+        sym = raw_sym.strip()
+        if sym == "H":
+            continue
+        if sym == "C":
+            c += cnt
+        elif sym == "N":
+            n += cnt
+        elif sym == "O":
+            o += cnt
+        elif sym == "S":
+            s += cnt
+        elif sym == "F":
+            f += cnt
+        elif sym == "Cl":
+            cl += cnt
+        elif sym == "Br":
+            br += cnt
+        elif sym == "I":
+            i += cnt
+        elif sym == "B":
+            b += cnt
+        elif sym == "P":
+            p += cnt
+        elif sym == "Si":
+            si += cnt
+        elif sym in _METAL_SYMBOLS:
+            metal += cnt
+            extra[sym] += cnt
+        else:
+            other_heavy += cnt
+            extra[sym] += cnt
+    extra_tuple = tuple(sorted((k, int(v)) for k, v in extra.items() if v != 0))
+    return AtomCountVec(
+        c=c,
+        n=n,
+        o=o,
+        s=s,
+        f=f,
+        cl=cl,
+        br=br,
+        i=i,
+        b=b,
+        p=p,
+        si=si,
+        metal=metal,
+        other_heavy=other_heavy,
+        extra_elements=extra_tuple,
+    )
+
+
+def atom_vec_from_mol(mol: Chem.Mol) -> AtomCountVec:
+    """Convert an RDKit `Chem.Mol` into an exact heavy-atom `AtomCountVec`."""
+    counts = Counter(atom.GetSymbol() for atom in mol.GetAtoms() if atom.GetAtomicNum() > 1)
+    return atom_vec_from_counts(counts)
+
+
+def atom_vec_from_smiles(smiles: str) -> AtomCountVec:
+    """Parse SMILES via RDKit and return its exact 13-channel `AtomCountVec`."""
+    if not isinstance(smiles, str) or not smiles.strip():
+        raise ValueError("smiles must be a non-empty string")
+    mol = Chem.MolFromSmiles(smiles.strip())
+    if mol is None:
+        raise ValueError(f"Invalid SMILES: {smiles!r}")
+    return atom_vec_from_mol(mol)
+
+
 def _sum_atoms(vecs: Sequence[AtomCountVec]) -> AtomCountVec:
-    acc = AtomCountVec(0, 0, 0, 0, 0)
+    acc = AtomCountVec()
     for vec in vecs:
         acc = acc.add(vec)
     return acc
@@ -187,7 +305,6 @@ def select_pareto_green_option(
     on_time = [o for o in base.pareto_frontier if o.lead_time_days <= max_lead_days]
     pool = on_time if on_time else list(base.pareto_frontier)
 
-    # Min-max utopia-point Euclidean distance on normalized (cost, lead_time, PMI)
     costs = np.array([float(o.usd_per_g or 0.0) for o in pool], dtype=np.float64)
     leads = np.array([float(o.lead_time_days) for o in pool], dtype=np.float64)
     pmis = np.array([float(o.pmi_kg_per_kg) for o in pool], dtype=np.float64)
@@ -196,7 +313,6 @@ def select_pareto_green_option(
     l_norm = (leads - leads.min()) / max(float(leads.max() - leads.min()), 1.0)
     p_norm = (pmis - pmis.min()) / max(float(pmis.max() - pmis.min()), 1.0)
 
-    # Weight greenness (PMI) and lead-time reliability alongside unit cost
     utopia_score = 0.30 * (c_norm**2) + 0.30 * (l_norm**2) + 0.40 * (p_norm**2)
     best_idx = int(np.argmin(utopia_score))
     return ParetoTriageDecision(
@@ -244,20 +360,19 @@ def run_benchmark(
     null_price_leaks = 0
     stoichiometry_leaks = 0
 
-    target_atoms = AtomCountVec(c=14, n=2, o=2, s=0, hal=0)
-    leaving_hcl = AtomCountVec(c=0, n=0, o=0, s=0, hal=1)
-    leaving_h2o = AtomCountVec(c=0, n=0, o=1, s=0, hal=0)
+    target_atoms = AtomCountVec(c=14, n=2, o=2)
+    leaving_hcl = AtomCountVec(cl=1)
+    leaving_h2o = AtomCountVec(o=1)
     reactants_chlorinated = (
-        AtomCountVec(c=8, n=0, o=1, s=0, hal=1),
-        AtomCountVec(c=6, n=2, o=1, s=0, hal=0),
+        AtomCountVec(c=8, o=1, cl=1),
+        AtomCountVec(c=6, n=2, o=1),
     )
     reactants_green_amide = (
-        AtomCountVec(c=8, n=0, o=2, s=0, hal=0),
-        AtomCountVec(c=6, n=2, o=1, s=0, hal=0),
+        AtomCountVec(c=8, o=2),
+        AtomCountVec(c=6, n=2, o=1),
     )
 
     for idx in range(n_candidates):
-        # Option A: Cheap stoichiometric acyl-chloride route (high chlorinated PMI, slow shipping)
         opt_cheap_dirty = GreenProcurementOption(
             option_id=f"cand_{idx}_cheap_dirty",
             is_direct_buy=False,
@@ -274,7 +389,6 @@ def run_benchmark(
             lead_time_days=int(rng.integers(11, 19)),
             pmi_kg_per_kg=round(float(rng.uniform(68.0, 112.0)), 2),
         )
-        # Option B: Catalytic aqueous/bio-solvent 1-step route (moderate cost, fast, low PMI)
         opt_green_fast = GreenProcurementOption(
             option_id=f"cand_{idx}_green_catalytic",
             is_direct_buy=False,
@@ -291,7 +405,6 @@ def run_benchmark(
             lead_time_days=int(rng.integers(3, 8)),
             pmi_kg_per_kg=round(float(rng.uniform(13.0, 26.0)), 2),
         )
-        # Option C: Direct domestic catalog stock (higher price, 2-day delivery, low repackaging PMI)
         opt_direct_stock = GreenProcurementOption(
             option_id=f"cand_{idx}_direct_buy",
             is_direct_buy=True,
@@ -299,7 +412,7 @@ def run_benchmark(
             max_steps=3,
             bond_is_acyclic=True,
             target_atoms=target_atoms,
-            leaving_delta=AtomCountVec(0, 0, 0, 0, 0),
+            leaving_delta=AtomCountVec(),
             reactant_atoms=(),
             all_leaves_in_stock=True,
             cost_complete=True,
@@ -308,7 +421,6 @@ def run_benchmark(
             lead_time_days=2,
             pmi_kg_per_kg=round(float(rng.uniform(18.0, 30.0)), 2),
         )
-        # Option D: Unpriced public vendor listing (`usd_per_g=None` -> must abstain!)
         opt_unpriced = GreenProcurementOption(
             option_id=f"cand_{idx}_unpriced",
             is_direct_buy=True,
@@ -316,7 +428,7 @@ def run_benchmark(
             max_steps=3,
             bond_is_acyclic=True,
             target_atoms=target_atoms,
-            leaving_delta=AtomCountVec(0, 0, 0, 0, 0),
+            leaving_delta=AtomCountVec(),
             reactant_atoms=(),
             all_leaves_in_stock=True,
             cost_complete=False,
@@ -325,7 +437,6 @@ def run_benchmark(
             lead_time_days=1,
             pmi_kg_per_kg=5.0,
         )
-        # Option E: Endocyclic lactam ring-cleavage trap (`bond_is_acyclic=False` -> must reject!)
         opt_ring_trap = GreenProcurementOption(
             option_id=f"cand_{idx}_ring_trap",
             is_direct_buy=False,

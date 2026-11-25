@@ -18,7 +18,10 @@ DB_PATH = Path("data/stock.sqlite")
 
 def import_sdf(sdf_path: Path, db_path: Path = DB_PATH, max_rows: int = 0) -> int:
     db_path.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(str(db_path))
+    conn = sqlite3.connect(str(db_path), timeout=30.0)
+    conn.execute("PRAGMA busy_timeout = 30000")
+    conn.execute("PRAGMA journal_mode = WAL")
+    conn.execute("PRAGMA synchronous = NORMAL")
     conn.execute(
         """
         CREATE TABLE IF NOT EXISTS stock (

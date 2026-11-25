@@ -315,3 +315,122 @@ def test_desalting_and_candidate_deduplication(tmp_path: Path, monkeypatch) -> N
     lido_res = next(r for r in ranked if r.candidate == lidocaine_hcl)
     assert lido_res.status == "buyable"
     assert any("desalted parent structure" in r for r in lido_res.reasons)
+
+
+def test_symmetric_salt_matching_mw_scaling_quaternary_cations_and_stereo_flags(
+    tmp_path: Path,
+) -> None:
+    import pytest
+    from rdkit import Chem
+
+    # 1. Permanent quaternary ammonium salt (cetrimonium bromide, MW ~364.45) MUST keep Br- counterion
+    ctab = normalize_smiles("CCCCCCCCCCCCCCCC[N+](C)(C)C.[Br-]", desalt=True)
+    assert ctab is not None
+    assert ctab.has_permanent_charge is True
+    assert "[Br-]" in ctab.canonical_smiles
+    assert ctab.mol is not None and Chem.GetFormalCharge(ctab.mol) == 0
+    assert ctab.mol_weight == pytest.approx(364.45, abs=0.2)
+
+    # Hydrate of permanent quaternary salt strips .O water while retaining [Br-] counterion
+    ctab_hyd = normalize_smiles("CCCCCCCCCCCCCCCC[N+](C)(C)C.[Br-].O", desalt=True)
+    assert ctab_hyd is not None
+    assert ctab_hyd.inchikey == ctab.inchikey
+    assert ctab_hyd.mol_weight == pytest.approx(ctab.mol_weight, abs=1e-4)
+
+    # 2. Symmetric salt matching + stereoisomer advisory vs stereo_relaxed flag
+    salt_chiral_stock = tmp_path / "salt_chiral.tsv"
+    salt_chiral_stock.write_text(
+        "smiles\tvendor\tcatalog_id\tpack_value\tpack_unit\tprice\tcurrency\tsource_id\tsource_url\tlicense\n"
+        "CCN(CC)CC(=O)Nc1c(C)cccc1C.Cl\tVendorSalt\tS-1\t1\tg\t10.0\tUSD\tlocal_stock\thttps://ex/s1\tCC0-1.0\n"
+        "CC(C)Cc1ccc([C@@H](C)C(=O)O)cc1\tVendorChiral\tC-1\t1\tg\t20.0\tUSD\tlocal_stock\thttps://ex/c1\tCC0-1.0\n",
+        encoding="utf-8",
+    )
+    lido_free = "CCN(CC)CC(=O)Nc1c(C)cccc1C"
+    ibu_flat = "CC(C)Cc1ccc(C(C)C(=O)O)cc1"
+
+    ranked_strict, recs_strict = evaluate_candidates(
+        [lido_free, ibu_flat],
+        backends=("local_stock",),
+        offline=True,
+        stock_paths=[salt_chiral_stock],
+        cache_path=tmp_path / "c1.sqlite",
+        reaction_db_path=tmp_path / "no.sqlite",
+        scscore_weights=tmp_path / "no.gz",
+        stereo_relaxed=False,
+    )
+    by_cand = {r.candidate: r for r in ranked_strict}
+
+    # Neutral Lidocaine matches Lidocaine HCl salt stock with MW_offer/MW_target scaling (270.80 / 234.34)
+    lido_r = by_cand[lido_free]
+    assert lido_r.status == "buyable"
+    assert lido_r.inchikey_match == "salt_equivalent"
+    assert lido_r.best_price is not None
+    assert lido_r.best_price.value == pytest.approx(10.0 * (270.80 / 234.34), rel=1e-3)
+    assert recs_strict[0].inchikey_match == "salt_equivalent"
+    assert len(recs_strict[0].matched_offer_inchikeys) == 1
+    assert recs_strict[0].matched_offer_inchikeys[0] != recs_strict[0].molecule.inchikey
+
+    # Flat Ibuprofen is NOT silently conflated with (S)-Ibuprofen by default, but surfaces explicit advisory
+    ibu_r = by_cand[ibu_flat]
+    assert ibu_r.status == "unknown"
+    assert ibu_r.inchikey_match == "none"
+    assert len(ibu_r.stereoisomer_inchikeys_in_stock) == 1
+    assert any("stereoisomer_advisory" in reason for reason in ibu_r.reasons)
+
+    # Opting into stereo_relaxed=True accepts stereoisomeric stock with explicit flag
+    ranked_relaxed, _ = evaluate_candidates(
+        [ibu_flat],
+        backends=("local_stock",),
+        offline=True,
+        stock_paths=[salt_chiral_stock],
+        cache_path=tmp_path / "c1_rel.sqlite",
+        reaction_db_path=tmp_path / "no.sqlite",
+        scscore_weights=tmp_path / "no.gz",
+        stereo_relaxed=True,
+    )
+    assert ranked_relaxed[0].status == "buyable"
+    assert ranked_relaxed[0].inchikey_match == "stereoisomer_relaxed"
+    assert any("stereoisomer_relaxed" in reason for reason in ranked_relaxed[0].reasons)
+
+    # 3. Reverse direction: Lidocaine HCl queried against freebase stock scales by 234.34 / 270.80
+    free_stock = tmp_path / "free.tsv"
+    free_stock.write_text(
+        "smiles\tvendor\tcatalog_id\tpack_value\tpack_unit\tprice\tcurrency\tsource_id\tsource_url\tlicense\n"
+        "CCN(CC)CC(=O)Nc1c(C)cccc1C\tVendorFree\tF-1\t1\tg\t10.0\tUSD\tlocal_stock\thttps://ex/f1\tCC0-1.0\n",
+        encoding="utf-8",
+    )
+    r_hcl, _ = evaluate_candidates(
+        ["CCN(CC)CC(=O)Nc1c(C)cccc1C.Cl"],
+        backends=("local_stock",),
+        offline=True,
+        stock_paths=[free_stock],
+        cache_path=tmp_path / "c2.sqlite",
+        reaction_db_path=tmp_path / "no.sqlite",
+        scscore_weights=tmp_path / "no.gz",
+    )
+    assert r_hcl[0].status == "buyable"
+    assert r_hcl[0].inchikey_match == "salt_equivalent"
+    assert r_hcl[0].best_price is not None
+    assert r_hcl[0].best_price.value == pytest.approx(10.0 * (234.34 / 270.80), rel=1e-3)
+
+    # 4. Retrosynthetic neutral leaf matches amine.HCl salt in local stock
+    salt_bb_stock = tmp_path / "salt_bb.tsv"
+    salt_bb_stock.write_text(
+        "smiles\tvendor\tcatalog_id\tpack_value\tpack_unit\tprice\tcurrency\tsource_id\tsource_url\tlicense\n"
+        "O=C(O)c1ccccc1\tVendorBB\tBZA\t1\tg\t1.0\tUSD\tlocal_stock\thttps://ex/bza\tCC0-1.0\n"
+        "Nc1ccccc1.Cl\tVendorBB\tANI-HCL\t1\tg\t2.0\tUSD\tlocal_stock\thttps://ex/anihcl\tCC0-1.0\n",
+        encoding="utf-8",
+    )
+    r_benz, _ = evaluate_candidates(
+        ["O=C(Nc1ccccc1)c1ccccc1"],
+        max_steps=1,
+        backends=("local_stock",),
+        route_backend="template",
+        offline=True,
+        stock_paths=[salt_bb_stock],
+        cache_path=tmp_path / "c3.sqlite",
+        reaction_db_path=tmp_path / "no.sqlite",
+        scscore_weights=tmp_path / "no.gz",
+    )
+    assert r_benz[0].status == "makeable"
+    assert r_benz[0].cost_complete is True
