@@ -147,3 +147,116 @@ def test_cost_estimate_reports_skipped_leaves() -> None:
     )
     assert route_cost_method([]) == EST_COST_METHOD
     assert skipped_leaves_from_method(EST_COST_METHOD) is None
+
+
+def test_bulk_drum_moq_outlay_and_max_pack_multiple_gate() -> None:
+    import pytest
+
+    from buyormake.cost import estimate_route_cost_bounds
+    from buyormake.rank import filter_decisions_from_ranked
+    from buyormake.schema import RankResult
+
+    target = "O=C(Nc1ccccc1)c1ccccc1"
+    acid = "O=C(O)c1ccccc1"
+    amine = "Nc1ccccc1"
+    acid_ik = normalize_smiles(acid).inchikey  # type: ignore[union-attr]
+    amine_ik = normalize_smiles(amine).inchikey  # type: ignore[union-attr]
+
+    leaf_offers = {
+        acid_ik: [
+            _offer(acid, price=500.0, currency="USD", pack_val=1.0, pack_unit="kg"),
+            _offer(acid, price=45.0, currency="USD", pack_val=1.0, pack_unit="g"),
+        ],
+        amine_ik: [
+            _offer(amine, price=1.0, currency="USD", pack_val=1.0, pack_unit="g"),
+        ],
+    }
+
+    # Uncapped unit price sees $0.50/g drum lower bound, while discrete MOQ outlay is $45 + $1 = $46
+    bounds = estimate_route_cost_bounds(target, [acid, amine], leaf_offers)
+    assert bounds.est_cost is not None and bounds.est_cost.value < 1.0
+    assert bounds.min_outlay_cost is not None
+    assert bounds.min_outlay_cost.value == pytest.approx(46.0)
+
+    # Capping max_pack_multiple=50 on a 1 g synthesis excludes the 1 kg drum and uses the $45/1 g vial
+    capped = estimate_route_cost_bounds(
+        target, [acid, amine], leaf_offers, target_scale_g=1.0, max_pack_multiple=50.0
+    )
+    assert capped.est_cost is not None and capped.est_cost.value > 25.0
+
+    # Budget filter distinguishes idealized 100%-yield `leaf_lower_bound` and blocks on MOQ outlay
+    rr = RankResult(
+        candidate=target,
+        status="makeable",
+        n_steps=1,
+        est_cost=bounds.est_cost,
+        est_cost_yield_adjusted=bounds.yield_adjusted_cost,
+        min_outlay_cost=bounds.min_outlay_cost,
+        step_yield_assumed=1.0,
+        cost_complete=True,
+    )
+    lower_only = filter_decisions_from_ranked([rr], budget=10.0, require_complete_cost=True)
+    assert lower_only.decisions[0].price_status == "leaf_lower_bound"
+
+    moq_enforced = filter_decisions_from_ranked(
+        [rr], budget=10.0, require_complete_cost=True, enforce_moq_outlay=True
+    )
+    assert moq_enforced.decisions[0].keep is False
+    assert moq_enforced.decisions[0].over_budget is True
+    assert any("over_budget_moq_outlay" in r for r in moq_enforced.decisions[0].reasons)
+
+
+def test_step_depth_yield_compounding_penalizes_linear_over_convergent_routes() -> None:
+    from buyormake.cost import estimate_route_cost_bounds
+    from buyormake.rank import filter_decisions_from_ranked
+    from buyormake.schema import RankResult, RouteStep
+
+    target = "COc1ccc(C(=O)Nc2ccc(-c3ccc(NC(=O)C)cc3)cc2)cc1"
+    l1 = "COc1ccc(C(=O)O)cc1"
+    l2 = "Nc1ccc(Br)cc1"
+    l3 = "OB(O)c1ccc(N)cc1"
+    l4 = "CC(=O)O"
+    leaves = [l1, l2, l3, l4]
+    leaf_offers = {
+        normalize_smiles(s).inchikey: [  # type: ignore[union-attr]
+            _offer(s, price=10.0, currency="USD", pack_val=1.0, pack_unit="g")
+        ]
+        for s in leaves
+    }
+
+    # Linear 3-step route: l3 and l4 sit at depth d=3 (1 / 0.70^3 = 2.9155x mass!)
+    linear_steps = [
+        RouteStep(product=target, reactants=[l1, "Nc1ccc(-c2ccc(NC(=O)C)cc2)cc1"], template_or_reference="s1", source="t"),
+        RouteStep(product="Nc1ccc(-c2ccc(NC(=O)C)cc2)cc1", reactants=[l2, "CC(=O)Nc1ccc(B(O)O)cc1"], template_or_reference="s2", source="t"),
+        RouteStep(product="CC(=O)Nc1ccc(B(O)O)cc1", reactants=[l3, l4], template_or_reference="s3", source="t"),
+    ]
+
+    # Convergent 3-step route over the exact same 4 leaves: all 4 leaves sit at depth d=2 (1 / 0.70^2 = 2.0408x mass!)
+    convergent_steps = [
+        RouteStep(product=target, reactants=["COc1ccc(C(=O)Nc2ccc(Br)cc2)cc1", "CC(=O)Nc1ccc(B(O)O)cc1"], template_or_reference="s1", source="t"),
+        RouteStep(product="COc1ccc(C(=O)Nc2ccc(Br)cc2)cc1", reactants=[l1, l2], template_or_reference="s2", source="t"),
+        RouteStep(product="CC(=O)Nc1ccc(B(O)O)cc1", reactants=[l3, l4], template_or_reference="s3", source="t"),
+    ]
+
+    b_lin = estimate_route_cost_bounds(
+        target, leaves, leaf_offers, steps=linear_steps, default_step_yield=0.70
+    )
+    b_conv = estimate_route_cost_bounds(
+        target, leaves, leaf_offers, steps=convergent_steps, default_step_yield=0.70
+    )
+    assert b_lin.est_cost is not None and b_conv.est_cost is not None
+    assert b_lin.lower_bound_cost == b_conv.lower_bound_cost  # Identical at 100% yield!
+    assert b_lin.est_cost.value > b_conv.est_cost.value       # Linear strictly costlier at 70% step yield!
+    assert b_lin.leaf_depths[l3] == [3]
+    assert b_conv.leaf_depths[l3] == [2]
+
+    rr_lin = RankResult(
+        candidate=target,
+        status="makeable",
+        n_steps=3,
+        est_cost=b_lin.est_cost,
+        step_yield_assumed=0.70,
+        cost_complete=True,
+    )
+    dec_ok = filter_decisions_from_ranked([rr_lin], budget=100.0, require_complete_cost=True)
+    assert dec_ok.decisions[0].price_status == "verified"

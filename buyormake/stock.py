@@ -6,6 +6,7 @@ import csv
 import gzip
 import json
 import sqlite3
+import threading
 import time
 import warnings
 from pathlib import Path
@@ -14,8 +15,8 @@ from typing import Any, Iterable, Optional
 import httpx
 import numpy as np
 
-from .cache import ResponseCache
-from .canonical import normalize_smiles
+from .cache import ResponseCache, open_readonly_sqlite
+from .canonical import NormalizedMol, normalize_smiles
 from .schema import Offer, Quantity, utc_now
 
 PUBCHEM_BASE = "https://pubchem.ncbi.nlm.nih.gov/rest"
@@ -69,7 +70,6 @@ def _decode_h5_str(val: Any) -> str:
 
 def _extract_inchikeys_via_h5py(h5_obj: Any) -> Optional[list[str]]:
     """Recursively locate an `inchi_key` / `inchikey` column or dataset in an open h5py File/Group."""
-    # PyTables Table compound dataset (e.g. /table/table with structured dtype)
     if hasattr(h5_obj, "dtype") and getattr(h5_obj.dtype, "names", None):
         names = h5_obj.dtype.names
         for key in ("inchi_key", "inchikey"):
@@ -78,7 +78,6 @@ def _extract_inchikeys_via_h5py(h5_obj: Any) -> Optional[list[str]]:
                 return [s for raw in col_vals if (s := _decode_h5_str(raw))]
         return None
 
-    # Group / File mapping containing sub-groups or 1D datasets
     if hasattr(h5_obj, "keys"):
         keys = set(h5_obj.keys())
         for key in ("inchi_key", "inchikey"):
@@ -97,7 +96,12 @@ class LocalStockBackend:
 
     def __init__(self, paths: Optional[Iterable[Path | str]] = None) -> None:
         self._offers_by_ik: dict[str, list[Offer]] = {}
+        self._offers_by_parent_ik: dict[str, list[Offer]] = {}
+        self._offers_by_conn14: dict[str, list[Offer]] = {}
+        self._mw_by_ik: dict[str, float] = {}
+        self._smiles_by_ik: dict[str, str] = {}
         self._sqlite_tables: list[tuple[sqlite3.Connection, Path, tuple[str, ...]]] = []
+        self._sqlite_lock = threading.RLock()
         if paths:
             for p in paths:
                 self.load_path(Path(p))
@@ -118,17 +122,45 @@ class LocalStockBackend:
             self._load_hdf5_stock(path)
 
     def _open_sqlite(self, path: Path) -> None:
-        conn = sqlite3.connect(str(path))
-        cur = conn.execute("PRAGMA table_info(stock)")
-        cols = tuple(str(row[1]) for row in cur.fetchall())
+        conn = open_readonly_sqlite(path)
+        with self._sqlite_lock:
+            cur = conn.execute("PRAGMA table_info(stock)")
+            cols = tuple(str(row[1]) for row in cur.fetchall())
         if not cols:
             conn.close()
             warnings.warn(f"SQLite stock file '{path}' has no 'stock' table; skipping.", stacklevel=2)
             return
         self._sqlite_tables.append((conn, path, cols))
 
-    def _add_offer(self, offer: Offer) -> None:
+    def _add_offer(
+        self,
+        offer: Offer,
+        *,
+        smiles: Optional[str] = None,
+        nm: Optional[NormalizedMol] = None,
+        parent_inchikey: Optional[str] = None,
+    ) -> None:
         self._offers_by_ik.setdefault(offer.inchikey, []).append(offer)
+        if len(offer.inchikey) >= 14:
+            self._offers_by_conn14.setdefault(offer.inchikey[:14], []).append(offer)
+
+        exact_nm = nm if nm is not None else (normalize_smiles(smiles, desalt=False) if smiles else None)
+        if exact_nm is not None:
+            self._mw_by_ik[offer.inchikey] = exact_nm.mol_weight
+            self._smiles_by_ik[offer.inchikey] = exact_nm.canonical_smiles
+            if (
+                "." in exact_nm.canonical_smiles
+                or "+" in exact_nm.canonical_smiles
+                or "-" in exact_nm.canonical_smiles
+            ):
+                p_nm = normalize_smiles(exact_nm.canonical_smiles, desalt=True)
+                if p_nm is not None and p_nm.inchikey != offer.inchikey:
+                    parent_inchikey = parent_inchikey or p_nm.inchikey
+                    self._mw_by_ik.setdefault(p_nm.inchikey, p_nm.mol_weight)
+                    self._smiles_by_ik.setdefault(p_nm.inchikey, p_nm.canonical_smiles)
+
+        if parent_inchikey and parent_inchikey != offer.inchikey:
+            self._offers_by_parent_ik.setdefault(parent_inchikey, []).append(offer)
 
     def _load_jsonl(self, path: Path) -> None:
         with path.open("r", encoding="utf-8") as f:
@@ -136,24 +168,32 @@ class LocalStockBackend:
                 line = line.strip()
                 if not line:
                     continue
-                row = json.loads(line)
+                row = dict(json.loads(line))
+                raw_smiles = row.pop("smiles", None)
+                parent_ik = row.pop("parent_inchikey", None)
+                nm = normalize_smiles(raw_smiles, desalt=False) if isinstance(raw_smiles, str) else None
                 ik = row.get("inchikey")
-                if not ik and row.get("smiles"):
-                    nm = normalize_smiles(row["smiles"])
-                    ik = nm.inchikey if nm else None
+                if not ik and nm is not None:
+                    ik = nm.inchikey
                 if not ik:
                     continue
                 row["inchikey"] = ik
-                self._add_offer(Offer.model_validate(row))
+                self._add_offer(
+                    Offer.model_validate(row),
+                    smiles=raw_smiles if isinstance(raw_smiles, str) else None,
+                    nm=nm,
+                    parent_inchikey=str(parent_ik).strip() if parent_ik else None,
+                )
 
     def _load_delimited(self, path: Path, delimiter: str) -> None:
         with path.open("r", encoding="utf-8", newline="") as f:
             reader = csv.DictReader(f, delimiter=delimiter)
             for row in reader:
+                raw_smiles = (row.get("smiles") or "").strip() or None
+                nm = normalize_smiles(raw_smiles, desalt=False) if raw_smiles else None
                 ik = (row.get("inchikey") or "").strip()
-                if not ik and row.get("smiles"):
-                    nm = normalize_smiles(row["smiles"])
-                    ik = nm.inchikey if nm else ""
+                if not ik and nm is not None:
+                    ik = nm.inchikey
                 if not ik:
                     continue
                 price = _parse_optional_float(row.get("price"))
@@ -168,9 +208,11 @@ class LocalStockBackend:
                 basis_raw = (row.get("price_basis") or "").strip()
                 price_basis = (
                     basis_raw
-                    if basis_raw in {"listed_catalog", "unknown"} and not (basis_raw == "listed_catalog" and price is None)
+                    if basis_raw in {"listed_catalog", "unknown"}
+                    and not (basis_raw == "listed_catalog" and price is None)
                     else ("listed_catalog" if price is not None else "unknown")
                 )
+                parent_ik = (row.get("parent_inchikey") or "").strip() or None
                 offer = Offer(
                     inchikey=ik,
                     vendor=(row.get("vendor") or "local_stock").strip(),
@@ -187,7 +229,7 @@ class LocalStockBackend:
                     fetched_utc=(row.get("fetched_utc") or utc_now()).strip(),
                     license=(row.get("license") or "custom/terms").strip(),
                 )
-                self._add_offer(offer)
+                self._add_offer(offer, smiles=raw_smiles, nm=nm, parent_inchikey=parent_ik)
 
     def _load_smi(self, path: Path) -> None:
         opener = gzip.open if path.name.lower().endswith(".gz") else open
@@ -198,7 +240,7 @@ class LocalStockBackend:
                 parts = line.strip().split()
                 if not parts or parts[0].startswith("#"):
                     continue
-                nm = normalize_smiles(parts[0])
+                nm = normalize_smiles(parts[0], desalt=False)
                 if nm is None:
                     continue
                 cat_id = parts[1] if len(parts) > 1 else None
@@ -214,7 +256,9 @@ class LocalStockBackend:
                         source_url=path.resolve().as_uri(),
                         fetched_utc=ts,
                         license="custom/terms",
-                    )
+                    ),
+                    smiles=parts[0],
+                    nm=nm,
                 )
 
     def _load_hdf5_stock(self, path: Path) -> None:
@@ -229,7 +273,9 @@ class LocalStockBackend:
             df = pd.read_hdf(path, key="table")
             col = "inchi_key" if "inchi_key" in df.columns else ("inchikey" if "inchikey" in df.columns else None)
             if col is None:
-                errors.append(f"pandas.read_hdf found columns {list(df.columns)}, expected 'inchi_key' or 'inchikey'")
+                errors.append(
+                    f"pandas.read_hdf found columns {list(df.columns)}, expected 'inchi_key' or 'inchikey'"
+                )
             else:
                 inchikeys = [s.strip() for s in df[col].dropna().astype(str) if s.strip()]
         except Exception as exc:
@@ -272,9 +318,51 @@ class LocalStockBackend:
                 )
             )
 
-    def lookup(self, inchikey: str) -> list[Offer]:
-        offers = list(self._offers_by_ik.get(inchikey, []))
+    def _row_to_offer(self, row: dict[str, Any], db_path: Path, default_ik: str) -> Offer:
+        ik = str(row.get("inchikey") or default_ik).strip() or default_ik
+        raw_smi = (str(row["smiles"]).strip() if row.get("smiles") is not None else "") or None
+        if raw_smi and ik not in self._mw_by_ik:
+            nm = normalize_smiles(raw_smi, desalt=False)
+            if nm is not None:
+                self._mw_by_ik[ik] = nm.mol_weight
+                self._smiles_by_ik[ik] = nm.canonical_smiles
+        price = _parse_optional_float(row.get("price"))
+        currency = (str(row["currency"]).strip() if row.get("currency") is not None else "") or None
+        if price is None:
+            currency = None
+        elif currency is None:
+            currency = "USD"
+        pack_val = row.get("pack_value") if row.get("pack_value") is not None else row.get("pack_size")
+        pack_unit = str(row["pack_unit"]).strip() if row.get("pack_unit") is not None else None
+        pack = _parse_pack_size(pack_val, pack_unit)
+        basis_raw = str(row.get("price_basis") or "").strip()
+        price_basis = (
+            basis_raw
+            if basis_raw in {"listed_catalog", "unknown"}
+            and not (basis_raw == "listed_catalog" and price is None)
+            else ("listed_catalog" if price is not None else "unknown")
+        )
+        return Offer(
+            inchikey=ik,
+            vendor=str(row.get("vendor") or "local_stock"),
+            catalog_id=(str(row["catalog_id"]).strip() if row.get("catalog_id") is not None else None) or None,
+            pack_size=pack,
+            purity=(str(row["purity"]).strip() if row.get("purity") is not None else None) or None,
+            price=price,
+            currency=currency,
+            price_basis=price_basis,  # type: ignore[arg-type]
+            lead_time_days=_parse_optional_int(row.get("lead_time_days")),
+            in_stock=_parse_optional_bool(row.get("in_stock")),
+            source_id=str(row.get("source_id") or "local_stock"),
+            source_url=str(row.get("source_url") or db_path.resolve().as_uri()),
+            fetched_utc=str(row.get("fetched_utc") or utc_now()),
+            license=str(row.get("license") or "custom/terms"),
+        )
+
+    def _query_sqlite(self, where_sql: str, params: tuple[Any, ...], fallback_ik: str) -> list[Offer]:
         desired_cols = (
+            "inchikey",
+            "smiles",
             "vendor",
             "catalog_id",
             "source_id",
@@ -291,56 +379,119 @@ class LocalStockBackend:
             "in_stock",
             "price_basis",
         )
-        for conn, db_path, available_cols in self._sqlite_tables:
-            select_cols = [c for c in desired_cols if c in available_cols]
-            if not select_cols:
-                continue
-            col_sql = ", ".join(f'"{c}"' for c in select_cols)
-            rows = conn.execute(
-                f'SELECT {col_sql} FROM stock WHERE "inchikey" = ?',
-                (inchikey,),
-            ).fetchall()
-            for raw_vals in rows:
-                row = dict(zip(select_cols, raw_vals))
-                price = _parse_optional_float(row.get("price"))
-                currency = (str(row["currency"]).strip() if row.get("currency") is not None else "") or None
-                if price is None:
-                    currency = None
-                elif currency is None:
-                    currency = "USD"
-                pack_val = row.get("pack_value") if row.get("pack_value") is not None else row.get("pack_size")
-                pack_unit = str(row["pack_unit"]).strip() if row.get("pack_unit") is not None else None
-                pack = _parse_pack_size(pack_val, pack_unit)
-                basis_raw = str(row.get("price_basis") or "").strip()
-                price_basis = (
-                    basis_raw
-                    if basis_raw in {"listed_catalog", "unknown"} and not (basis_raw == "listed_catalog" and price is None)
-                    else ("listed_catalog" if price is not None else "unknown")
-                )
-                offers.append(
-                    Offer(
-                        inchikey=inchikey,
-                        vendor=str(row.get("vendor") or "local_stock"),
-                        catalog_id=(str(row["catalog_id"]).strip() if row.get("catalog_id") is not None else None) or None,
-                        pack_size=pack,
-                        purity=(str(row["purity"]).strip() if row.get("purity") is not None else None) or None,
-                        price=price,
-                        currency=currency,
-                        price_basis=price_basis,  # type: ignore[arg-type]
-                        lead_time_days=_parse_optional_int(row.get("lead_time_days")),
-                        in_stock=_parse_optional_bool(row.get("in_stock")),
-                        source_id=str(row.get("source_id") or "local_stock"),
-                        source_url=str(row.get("source_url") or db_path.resolve().as_uri()),
-                        fetched_utc=str(row.get("fetched_utc") or utc_now()),
-                        license=str(row.get("license") or "custom/terms"),
-                    )
-                )
+        out: list[Offer] = []
+        with self._sqlite_lock:
+            for conn, db_path, available_cols in self._sqlite_tables:
+                select_cols = [c for c in desired_cols if c in available_cols]
+                if not select_cols:
+                    continue
+                col_sql = ", ".join(f'"{c}"' for c in select_cols)
+                rows = conn.execute(
+                    f"SELECT {col_sql} FROM stock WHERE {where_sql}",
+                    params,
+                ).fetchall()
+                for raw_vals in rows:
+                    row = dict(zip(select_cols, raw_vals))
+                    out.append(self._row_to_offer(row, db_path, fallback_ik))
+        return out
+
+    def lookup(self, inchikey: str) -> list[Offer]:
+        offers = list(self._offers_by_ik.get(inchikey, []))
+        if self._sqlite_tables:
+            offers.extend(self._query_sqlite('"inchikey" = ?', (inchikey,), inchikey))
         return offers
 
+    def lookup_parent_equivalents(
+        self,
+        parent_inchikey: str,
+        *,
+        exclude_inchikey: Optional[str] = None,
+    ) -> list[Offer]:
+        """Lookup salt/hydrate stock entries whose desalted parent equals `parent_inchikey`."""
+        offers = [
+            off
+            for off in self._offers_by_parent_ik.get(parent_inchikey, [])
+            if off.inchikey != exclude_inchikey
+        ]
+        with self._sqlite_lock:
+            for conn, db_path, available_cols in self._sqlite_tables:
+                if "parent_inchikey" not in available_cols:
+                    continue
+                desired_cols = [
+                    c
+                    for c in (
+                        "inchikey",
+                        "smiles",
+                        "vendor",
+                        "catalog_id",
+                        "source_id",
+                        "source_url",
+                        "fetched_utc",
+                        "license",
+                        "price",
+                        "currency",
+                        "pack_value",
+                        "pack_size",
+                        "pack_unit",
+                        "purity",
+                        "lead_time_days",
+                        "in_stock",
+                        "price_basis",
+                    )
+                    if c in available_cols
+                ]
+                if not desired_cols:
+                    continue
+                col_sql = ", ".join(f'"{c}"' for c in desired_cols)
+                rows = conn.execute(
+                    f'SELECT {col_sql} FROM stock WHERE "parent_inchikey" = ?',
+                    (parent_inchikey,),
+                ).fetchall()
+                for raw_vals in rows:
+                    row = dict(zip(desired_cols, raw_vals))
+                    off = self._row_to_offer(row, db_path, parent_inchikey)
+                    if off.inchikey != exclude_inchikey:
+                        offers.append(off)
+        return offers
+
+    def lookup_connectivity_block(
+        self,
+        connectivity_block: str,
+        *,
+        exclude_inchikeys: Optional[set[str]] = None,
+    ) -> list[Offer]:
+        """Lookup stereoisomer/racemate stock entries sharing the 14-char skeletal InChIKey block."""
+        if len(connectivity_block) < 14:
+            return []
+        conn14 = connectivity_block[:14]
+        excluded = exclude_inchikeys or set()
+        offers = [
+            off
+            for off in self._offers_by_conn14.get(conn14, [])
+            if off.inchikey not in excluded
+        ]
+        if self._sqlite_tables:
+            sq_offs = self._query_sqlite(
+                '"inchikey" LIKE ?',
+                (f"{conn14}-%",),
+                conn14,
+            )
+            offers.extend(off for off in sq_offs if off.inchikey not in excluded)
+        return offers
+
+    def mol_weight_for_inchikey(self, inchikey: str) -> Optional[float]:
+        with self._sqlite_lock:
+            return self._mw_by_ik.get(inchikey)
+
+    def known_mol_weights(self) -> dict[str, float]:
+        with self._sqlite_lock:
+            return dict(self._mw_by_ik)
+
     def close(self) -> None:
-        for conn, _, _ in self._sqlite_tables:
-            conn.close()
-        self._sqlite_tables.clear()
+        with self._sqlite_lock:
+            for conn, _, _ in self._sqlite_tables:
+                conn.close()
+            self._sqlite_tables.clear()
 
 
 class PubChemVendorBackend:
@@ -369,15 +520,17 @@ class PubChemVendorBackend:
             headers={"User-Agent": "buy-or-make/0.1 (open chemistry availability check)"},
         )
         self._last_req_ts = 0.0
+        self._req_lock = threading.RLock()
 
     def _throttle(self) -> None:
-        if self.min_interval_sec <= 0:
+        with self._req_lock:
+            if self.min_interval_sec <= 0:
+                self._last_req_ts = time.monotonic()
+                return
+            elapsed = time.monotonic() - self._last_req_ts
+            if elapsed < self.min_interval_sec:
+                time.sleep(self.min_interval_sec - elapsed)
             self._last_req_ts = time.monotonic()
-            return
-        elapsed = time.monotonic() - self._last_req_ts
-        if elapsed < self.min_interval_sec:
-            time.sleep(self.min_interval_sec - elapsed)
-        self._last_req_ts = time.monotonic()
 
     def _request_json(
         self,
@@ -400,7 +553,8 @@ class PubChemVendorBackend:
                     resp = self._client.get(url)
                 else:
                     resp = self._client.post(url, data=data)
-                self._last_req_ts = time.monotonic()
+                with self._req_lock:
+                    self._last_req_ts = time.monotonic()
             except httpx.TransportError:
                 if attempt < self.max_retries and self.backoff_base_sec > 0:
                     time.sleep(self.backoff_base_sec * (2**attempt))
@@ -419,7 +573,6 @@ class PubChemVendorBackend:
                     return resp.json(), False
                 except ValueError:
                     return None, False
-            # Other 4xx statuses (e.g. 401/403 proxy errors) are not cached as negative compounds
             return None, False
         return None, False
 
@@ -487,8 +640,6 @@ class PubChemVendorBackend:
             f"{PUBCHEM_BASE}/pug_view/categories/compound/{cid}/JSON",
         )
         if data is None:
-            # 404 on PUG-View means compound has no PUG-View vendor categories -> cacheable empty list.
-            # Transient error (not_found=False) -> NOT cacheable!
             return [], not_found
         cats = data.get("SourceCategories", {}).get("Categories", [])
         vendors: list[dict] = []

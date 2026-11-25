@@ -160,15 +160,23 @@ class NormalizedMol:
     formula: str
     mol_weight: float
     num_heavy_atoms: int = 0
+    has_permanent_charge: bool = False
     mol: Optional[Chem.Mol] = field(default=None, repr=False, compare=False, hash=False)
+
+    @property
+    def connectivity_block(self) -> str:
+        """14-character IUPAC InChIKey skeletal connectivity block."""
+        return self.inchikey[:14] if len(self.inchikey) >= 14 else self.inchikey
 
 
 def normalize_smiles(smiles: str, *, desalt: bool = False) -> Optional[NormalizedMol]:
     """Parse and canonicalize SMILES via RDKit. Returns None for invalid/empty input.
 
-    When `desalt=True`, strips pharmaceutical salts, hydrates, and counterions via
+    When `desalt=True`, strips pharmaceutical acid/base salts, hydrates, and counterions via
     `rdMolStandardize.FragmentParent` followed by `Uncharger` so salt forms match neutral
-    parent catalog entries.
+    parent catalog entries. Permanent ions whose formal charge cannot be neutralized by proton
+    transfer (such as quaternary ammonium or pyridinium salts) retain their counterions so
+    electroneutrality and counterion stoichiometry/molecular weight are preserved.
     """
     if not isinstance(smiles, str):
         return None
@@ -182,16 +190,50 @@ def normalize_smiles(smiles: str, *, desalt: bool = False) -> Optional[Normalize
         mol = Chem.Mol(mol)
         for atom in mol.GetAtoms():
             atom.SetAtomMapNum(0)
+
+    has_perm_charge = False
+    has_formal_charge = any(atom.GetFormalCharge() != 0 for atom in mol.GetAtoms())
+
     if desalt:
+        try:
+            orig_charge = Chem.GetFormalCharge(mol)
+            parent = rdMolStandardize.FragmentParent(mol)
+            if parent is not None and parent.GetNumAtoms() > 0:
+                uncharged = _UNCHARGER.uncharge(parent)
+                cand = uncharged if uncharged is not None else parent
+                cand_charge = Chem.GetFormalCharge(cand)
+                if cand_charge == 0:
+                    mol = cand
+                else:
+                    has_perm_charge = True
+                    frags = Chem.GetMolFrags(mol, asMols=True, sanitizeFrags=True)
+                    if len(frags) <= 1 or abs(cand_charge) <= abs(orig_charge):
+                        mol = cand
+                    else:
+                        # Strip neutral solvates/hydrates while retaining counterions that balance permanent charge
+                        charged_frags = [f for f in frags if Chem.GetFormalCharge(f) != 0]
+                        if (
+                            len(charged_frags) >= 2
+                            and len(charged_frags) < len(frags)
+                            and sum(Chem.GetFormalCharge(f) for f in charged_frags) == orig_charge
+                        ):
+                            combined = charged_frags[0]
+                            for extra in charged_frags[1:]:
+                                combined = Chem.CombineMols(combined, extra)
+                            mol = combined
+        except Exception:
+            pass
+    elif has_formal_charge:
         try:
             parent = rdMolStandardize.FragmentParent(mol)
             if parent is not None and parent.GetNumAtoms() > 0:
                 uncharged = _UNCHARGER.uncharge(parent)
-                mol = uncharged if uncharged is not None else parent
+                cand = uncharged if uncharged is not None else parent
+                has_perm_charge = Chem.GetFormalCharge(cand) != 0
         except Exception:
             pass
+
     can = Chem.MolToSmiles(mol, isomericSmiles=True, canonical=True)
-    # Re-parse canonical SMILES only if desalting or atom-map stripping changed topology
     inchikey = Chem.MolToInchiKey(mol)
     if not inchikey:
         return None
@@ -204,5 +246,6 @@ def normalize_smiles(smiles: str, *, desalt: bool = False) -> Optional[Normalize
         formula=formula,
         mol_weight=mw,
         num_heavy_atoms=n_heavy,
+        has_permanent_charge=has_perm_charge,
         mol=mol,
     )

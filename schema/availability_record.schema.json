@@ -364,6 +364,17 @@
           "title": "Est Cost Method",
           "type": "string"
         },
+        "est_cost_yield_adjusted": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Quantity"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
         "leaves": {
           "items": {
             "type": "string"
@@ -382,6 +393,17 @@
           "title": "Method",
           "type": "string"
         },
+        "min_outlay_cost": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Quantity"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
         "n_steps": {
           "title": "N Steps",
           "type": "integer"
@@ -397,6 +419,11 @@
           ],
           "default": null,
           "title": "Score"
+        },
+        "step_yield_assumed": {
+          "default": 1.0,
+          "title": "Step Yield Assumed",
+          "type": "number"
         },
         "steps": {
           "items": {
@@ -616,6 +643,39 @@
   },
   "additionalProperties": false,
   "properties": {
+    "inchikey_match": {
+      "default": "none",
+      "enum": [
+        "exact",
+        "salt_equivalent",
+        "stereoisomer_relaxed",
+        "none"
+      ],
+      "title": "Inchikey Match",
+      "type": "string"
+    },
+    "lead_time_days": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Lead Time Days"
+    },
+    "leaf_offers": {
+      "additionalProperties": {
+        "items": {
+          "$ref": "#/$defs/Offer"
+        },
+        "type": "array"
+      },
+      "title": "Leaf Offers",
+      "type": "object"
+    },
     "licenses": {
       "items": {
         "type": "string"
@@ -623,8 +683,27 @@
       "title": "Licenses",
       "type": "array"
     },
+    "matched_offer_inchikeys": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Matched Offer Inchikeys",
+      "type": "array"
+    },
     "molecule": {
       "$ref": "#/$defs/Molecule"
+    },
+    "moq_pack_g": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Moq Pack G"
     },
     "offers": {
       "items": {
@@ -643,6 +722,13 @@
       ],
       "title": "Origin",
       "type": "string"
+    },
+    "precursor_smiles": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Precursor Smiles",
+      "type": "array"
     },
     "provenance": {
       "$ref": "#/$defs/Provenance"
@@ -673,6 +759,13 @@
       "default": "0.1.0",
       "title": "Schema Version",
       "type": "string"
+    },
+    "stereoisomer_offers": {
+      "items": {
+        "$ref": "#/$defs/Offer"
+      },
+      "title": "Stereoisomer Offers",
+      "type": "array"
     }
   },
   "required": [

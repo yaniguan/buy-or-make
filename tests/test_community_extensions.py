@@ -17,6 +17,8 @@ AtomCountVec = _ce.AtomCountVec
 GreenProcurementOption = _ce.GreenProcurementOption
 SynthonPack = _ce.SynthonPack
 TargetAnalogueSpec = _ce.TargetAnalogueSpec
+atom_vec_from_counts = _ce.atom_vec_from_counts
+atom_vec_from_smiles = _ce.atom_vec_from_smiles
 compute_pareto_frontier = _ce.compute_pareto_frontier
 optimize_independent_per_target_cart = _ce.optimize_independent_per_target_cart
 optimize_shared_synthon_cart = _ce.optimize_shared_synthon_cart
@@ -188,3 +190,96 @@ def test_plate_pack_procurement_benchmark_metrics() -> None:
         >= 3.0 * indep_m["target_analogues_per_100_usd"]
     )
     assert shared_m["synthon_reuse_factor"] > 2.5
+
+
+def test_atom_count_vec_rejects_cross_halogen_swaps_and_missing_boron() -> None:
+    from buyormake.routes import RETRO_TEMPLATE_DELTAS
+
+    # Issue #29 regression: 4-fluorobiphenyl (C12H9F) under Suzuki biaryl disconnection
+    target_vec = atom_vec_from_smiles("Fc1ccc(-c2ccccc2)cc1")
+    suzuki_delta = atom_vec_from_counts(RETRO_TEMPLATE_DELTAS["suzuki_biaryl"])
+    assert target_vec == AtomCountVec(c=12, f=1)
+    assert suzuki_delta == AtomCountVec(o=2, br=1, b=1)
+
+    # 1. Valid Suzuki coupling: 1-bromo-4-fluorobenzene + phenylboronic acid -> PASS
+    valid_suzuki = GreenProcurementOption(
+        option_id="valid_suzuki",
+        is_direct_buy=False,
+        steps=1,
+        max_steps=2,
+        bond_is_acyclic=True,
+        target_atoms=target_vec,
+        leaving_delta=suzuki_delta,
+        reactant_atoms=(
+            atom_vec_from_smiles("Fc1ccc(Br)cc1"),
+            atom_vec_from_smiles("OB(O)c1ccccc1"),
+        ),
+        all_leaves_in_stock=True,
+        cost_complete=True,
+        is_usd_per_gram=True,
+        usd_per_g=5.0,
+        lead_time_days=2,
+        pmi_kg_per_kg=12.0,
+    )
+    assert verify_option_guardrails(valid_suzuki, budget_usd_per_g=50.0) == (True, None)
+
+    # 2. Bogus trans-halogenation + missing Boron (chlorobenzene + C6H5IO2, lumped hal=2) -> REJECTED!
+    bogus_transhalogen = GreenProcurementOption(
+        option_id="bogus_transhalogen_suzuki",
+        is_direct_buy=False,
+        steps=1,
+        max_steps=2,
+        bond_is_acyclic=True,
+        target_atoms=target_vec,
+        leaving_delta=suzuki_delta,
+        reactant_atoms=(
+            atom_vec_from_smiles("Clc1ccccc1"),
+            AtomCountVec(c=6, o=2, i=1),
+        ),
+        all_leaves_in_stock=True,
+        cost_complete=True,
+        is_usd_per_gram=True,
+        usd_per_g=5.0,
+        lead_time_days=2,
+        pmi_kg_per_kg=12.0,
+    )
+    assert verify_option_guardrails(bogus_transhalogen, budget_usd_per_g=50.0) == (
+        False,
+        "acyclic_atom_balanced_route",
+    )
+
+    # 3. Missing Boron on boronic acid partner -> REJECTED!
+    missing_boron = GreenProcurementOption(
+        option_id="missing_boron_suzuki",
+        is_direct_buy=False,
+        steps=1,
+        max_steps=2,
+        bond_is_acyclic=True,
+        target_atoms=target_vec,
+        leaving_delta=suzuki_delta,
+        reactant_atoms=(
+            atom_vec_from_smiles("Fc1ccc(Br)cc1"),
+            AtomCountVec(c=6, o=2, b=0),
+        ),
+        all_leaves_in_stock=True,
+        cost_complete=True,
+        is_usd_per_gram=True,
+        usd_per_g=5.0,
+        lead_time_days=2,
+        pmi_kg_per_kg=12.0,
+    )
+    assert verify_option_guardrails(missing_boron, budget_usd_per_g=50.0) == (
+        False,
+        "acyclic_atom_balanced_route",
+    )
+
+    # 4. P, Si, and organometallic (Mg vs Sn) tracking
+    p_vec = atom_vec_from_smiles("CCOP(=O)(OCC)Cc1ccccc1")
+    si_vec = atom_vec_from_smiles("C[Si](C)(C)Oc1ccccc1")
+    mg_vec = atom_vec_from_smiles("Br[Mg]c1ccccc1")
+    sn_vec = atom_vec_from_smiles("CCCC[Sn](CCCC)(CCCC)c1ccccc1")
+    assert p_vec.p == 1
+    assert si_vec.si == 1
+    assert mg_vec.metal == 1 and mg_vec.br == 1
+    assert sn_vec.metal == 1
+    assert mg_vec != sn_vec

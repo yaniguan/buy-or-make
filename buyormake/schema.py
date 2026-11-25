@@ -215,6 +215,9 @@ class Route(_Model):
     est_cost: Optional[Quantity] = None
     est_cost_method: str
     est_cost_complete: bool
+    est_cost_yield_adjusted: Optional[Quantity] = None
+    min_outlay_cost: Optional[Quantity] = None
+    step_yield_assumed: float = 1.0
 
     @model_validator(mode="after")
     def _validate_route(self) -> "Route":
@@ -224,6 +227,12 @@ class Route(_Model):
             raise ValueError("Route.leaves and Route.leaves_purchasable must have equal length")
         if self.score is not None and not math.isfinite(self.score):
             raise ValueError("Route.score must be finite")
+        if (
+            isinstance(self.step_yield_assumed, bool)
+            or not math.isfinite(self.step_yield_assumed)
+            or not (0.0 < self.step_yield_assumed <= 1.0)
+        ):
+            raise ValueError("Route.step_yield_assumed must be in (0, 1]")
         return self
 
 
@@ -280,16 +289,40 @@ class AssayfoldRecord(_Model):
         return self.model_copy(update={"record_hash": self.content_hash()})
 
 
+InChIKeyMatchLiteral = Literal["exact", "salt_equivalent", "stereoisomer_relaxed", "none"]
+
+
 class AvailabilityRecord(_Model):
     molecule: Molecule
     offers: list[Offer] = Field(default_factory=list)
     routes: list[Route] = Field(default_factory=list)
+    leaf_offers: dict[str, list[Offer]] = Field(default_factory=dict)
+    lead_time_days: Optional[int] = None
+    moq_pack_g: Optional[float] = None
+    precursor_smiles: list[str] = Field(default_factory=list)
+    inchikey_match: InChIKeyMatchLiteral = "none"
+    matched_offer_inchikeys: list[str] = Field(default_factory=list)
+    stereoisomer_offers: list[Offer] = Field(default_factory=list)
     sa_scores: SAScores = Field(default_factory=SAScores)
     origin: OriginLiteral = "real"
     provenance: Provenance = Field(default_factory=Provenance)
     licenses: list[str] = Field(default_factory=list)
     schema_version: str = SCHEMA_VERSION
     record_hash: Optional[str] = None
+
+    @model_validator(mode="after")
+    def _validate_availability_record(self) -> "AvailabilityRecord":
+        if self.lead_time_days is not None:
+            if isinstance(self.lead_time_days, bool) or self.lead_time_days < 0:
+                raise ValueError("AvailabilityRecord.lead_time_days must be >= 0")
+        if self.moq_pack_g is not None:
+            if (
+                isinstance(self.moq_pack_g, bool)
+                or not math.isfinite(self.moq_pack_g)
+                or self.moq_pack_g <= 0
+            ):
+                raise ValueError("AvailabilityRecord.moq_pack_g must be a finite number > 0")
+        return self
 
     def content_hash(self) -> str:
         """SHA-256 over canonical JSON. Excludes record_hash and provenance.recorded_utc."""
@@ -318,6 +351,10 @@ class AvailabilityRecord(_Model):
         best_price = cheapest_offer_for_target(self.offers)
         if best_price is not None:
             props["best_price"] = best_price
+        if self.lead_time_days is not None:
+            props["lead_time_days"] = Quantity(value=float(self.lead_time_days), unit="d")
+        if self.moq_pack_g is not None:
+            props["moq_pack_g"] = Quantity(value=float(self.moq_pack_g), unit="g")
 
         solved = [r for r in self.routes if r.leaves and all(r.leaves_purchasable)]
         if self.offers:
@@ -345,9 +382,15 @@ class AvailabilityRecord(_Model):
         for off in self.offers:
             if off.license:
                 all_licenses.add(off.license)
+        for l_offs in self.leaf_offers.values():
+            for lo in l_offs:
+                if lo.license:
+                    all_licenses.add(lo.license)
         governing_license = select_record_license(all_licenses, default="MIT")
 
         tags = [status_tag]
+        if self.inchikey_match != "none":
+            tags.append(f"inchikey_match:{self.inchikey_match}")
         for lic in sorted(all_licenses):
             tags.append(f"license:{lic}")
 
@@ -381,7 +424,16 @@ class RankResult(_Model):
     n_steps: Optional[int] = None
     best_price: Optional[Quantity] = None
     est_cost: Optional[Quantity] = None
+    est_cost_yield_adjusted: Optional[Quantity] = None
+    min_outlay_cost: Optional[Quantity] = None
+    step_yield_assumed: float = 1.0
     cost_complete: bool = False
+    lead_time_days: Optional[int] = None
+    moq_pack_g: Optional[float] = None
+    precursor_smiles: list[str] = Field(default_factory=list)
+    inchikey_match: InChIKeyMatchLiteral = "none"
+    matched_offer_inchikeys: list[str] = Field(default_factory=list)
+    stereoisomer_inchikeys_in_stock: list[str] = Field(default_factory=list)
     sa_scores: Optional[SAScores] = None
     reasons: list[str] = Field(default_factory=list)
     evidence: list[str] = Field(default_factory=list)
@@ -389,6 +441,7 @@ class RankResult(_Model):
 
 PriceStatusLiteral = Literal[
     "verified",
+    "leaf_lower_bound",
     "missing",
     "incomplete",
     "incompatible_unit",
@@ -410,6 +463,8 @@ class FilterSummary(_Model):
     budget: Optional[float] = None
     budget_currency: str = "USD"
     require_complete_cost: bool = False
+    max_outlay_budget: Optional[float] = None
+    use_yield_adjusted_cost: bool = False
     kept: list[RankResult] = Field(default_factory=list)
     over_budget: list[RankResult] = Field(default_factory=list)
     rejected: list[RankResult] = Field(default_factory=list)

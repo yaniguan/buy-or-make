@@ -104,6 +104,23 @@ def _add_eval_arguments(p: argparse.ArgumentParser) -> None:
         action="store_true",
         help="Reject unpriced buyables and incomplete-cost routes when --budget is set.",
     )
+    p.add_argument(
+        "--stereo-relaxed",
+        action="store_true",
+        help="Allow 14-char skeletal InChIKey stereoisomer/racemate stock matches with explicit disclosure.",
+    )
+    p.add_argument(
+        "--step-yield",
+        type=float,
+        default=1.0,
+        help="Assumed fractional yield per reaction step in (0, 1] for route cost compounding (default: 1.0).",
+    )
+    p.add_argument(
+        "--max-outlay-budget",
+        type=float,
+        default=None,
+        help="Optional discrete pack MOQ cash-outlay ceiling in budget currency.",
+    )
     p.add_argument("--json", action="store_true", dest="as_json", help="Output JSON.")
 
 
@@ -161,18 +178,25 @@ def main(argv: Optional[list[str]] = None) -> int:
             cache_max_age_seconds=ttl_sec,
             refresh_cache=args.refresh_cache,
             stock_paths=args.stock,
+            stereo_relaxed=args.stereo_relaxed,
+            default_step_yield=args.step_yield,
             currency=args.budget_currency,
         )
         if args.records_out is not None:
             _write_records_jsonl(records, args.records_out)
 
-        use_filter = args.command == "filter" or args.budget is not None
+        use_filter = (
+            args.command == "filter"
+            or args.budget is not None
+            or args.max_outlay_budget is not None
+        )
         if use_filter:
             summary = filter_decisions_from_ranked(
                 results,
                 budget=args.budget,
                 budget_currency=args.budget_currency,
                 require_complete_cost=args.require_complete_cost,
+                max_outlay_budget=args.max_outlay_budget,
             )
             if args.as_json:
                 print(json.dumps(summary.model_dump(mode="json"), indent=2))

@@ -2,12 +2,14 @@
 # BuyOrMakeLean: Formal L5 Stoichiometric, Strict-Null Budget & Green Pareto Guardrails
 
 Self-contained Lean 4 (`v4.36.0`) formalization for `buy-or-make` (`L5`), synchronized
-with the central 14-repository Auto-Lab Trust Regime (`AutoLabLean`):
+with the central 15-repository Auto-Lab Trust Regime (`AutoLabLean`):
 
-1. **Acyclic Disconnection & Heavy-Atom Conservation (`AtomVec`, `routeStoichiometryOK`)**:
-   - Synthesis routes (`isDirectBuy = false`) must cleave only acyclic bonds
-     (`bondIsAcyclic = true`, preventing cyclic lactam/lactone atom duplication) and
-     conserve exact heavy-atom counts `sumAtoms reactantAtoms = targetAtoms + leavingDelta`.
+1. **Acyclic Disconnection & Element-Exact Heavy-Atom Conservation (`AtomVec`, `routeStoichiometryOK`)**:
+   - Synthesis routes (`isDirectBuy = false`) must avoid atom-duplicating endocyclic bond splits
+     (`bondIsAcyclic = true`) and conserve exact heavy-atom counts across all 13 channels
+     `(C, N, O, S, F, Cl, Br, I, B, P, Si, metal, otherHeavy)`:
+     `sumAtoms reactantAtoms = targetAtoms + leavingDelta`, catching cross-halogen swaps
+     (`Ar-F` vs `Ar-Cl`) and Suzuki boron / organometallic synthon imbalances.
 2. **Strict-Null Homogeneous `USD/g` Budget Gate (`budgetPolicyOK`, `unpriced_never_passes_budget`)**:
    - Missing catalog prices (`priceCents = none`), incomplete leaf pricing
      (`costComplete = false`), or non-`USD/g` units (`isUsdPerGram = false`) can NEVER
@@ -66,20 +68,43 @@ theorem firstViolation_none_iff (checks : List (Bool × RegimeViolation)) :
 
 /-! ## 1. Stoichiometric Atom Conservation, Strict Pricing & License Gate -/
 
-/-- Exact heavy-atom count vector `(C, N, O, S, Hal)`. -/
+/-- Exact 13-channel heavy-atom count vector distinguishing individual halogens `(F, Cl, Br, I)`,
+    main-group coupling elements `(B, P, Si)`, `metal` synthons, and `otherHeavy` elements. -/
 structure AtomVec where
-  c   : Nat
-  n   : Nat
-  o   : Nat
-  s   : Nat
-  hal : Nat
+  c          : Nat := 0
+  n          : Nat := 0
+  o          : Nat := 0
+  s          : Nat := 0
+  f          : Nat := 0
+  cl         : Nat := 0
+  br         : Nat := 0
+  i          : Nat := 0
+  b          : Nat := 0
+  p          : Nat := 0
+  si         : Nat := 0
+  metal      : Nat := 0
+  otherHeavy : Nat := 0
   deriving DecidableEq, Repr
 
+def AtomVec.zero : AtomVec := {}
+
 def AtomVec.add (a b : AtomVec) : AtomVec :=
-  { c := a.c + b.c, n := a.n + b.n, o := a.o + b.o, s := a.s + b.s, hal := a.hal + b.hal }
+  { c          := a.c + b.c
+    n          := a.n + b.n
+    o          := a.o + b.o
+    s          := a.s + b.s
+    f          := a.f + b.f
+    cl         := a.cl + b.cl
+    br         := a.br + b.br
+    i          := a.i + b.i
+    b          := a.b + b.b
+    p          := a.p + b.p
+    si         := a.si + b.si
+    metal      := a.metal + b.metal
+    otherHeavy := a.otherHeavy + b.otherHeavy }
 
 def sumAtoms : List AtomVec → AtomVec
-  | [] => { c := 0, n := 0, o := 0, s := 0, hal := 0 }
+  | [] => AtomVec.zero
   | x :: xs => AtomVec.add x (sumAtoms xs)
 
 /-- Procurement or retrosynthetic proposal checked by `buy-or-make` at Layer L5. -/
@@ -186,6 +211,50 @@ theorem non_usd_per_gram_rejected_under_budget (p : MakeOrBuyProposal) (B : Nat)
   have hb := ((checkBuyOrMake_ok_iff p).mp hok).budgetOK
   cases hpc : p.priceCents <;> simp [budgetPolicyOK, hbud, hpc, hunit] at hb
 
+/-- Hard boundary theorem 5: Cross-halogen swaps (`F`, `Cl`, `Br`, `I`) are rejected even if
+    total lumped halogen count would appear conserved. -/
+theorem cross_halogen_swap_rejected (p : MakeOrBuyProposal)
+    (hmake : p.isDirectBuy = false)
+    (hhal : (sumAtoms p.reactantAtoms).f ≠ p.targetAtoms.f + p.leavingDelta.f ∨
+            (sumAtoms p.reactantAtoms).cl ≠ p.targetAtoms.cl + p.leavingDelta.cl ∨
+            (sumAtoms p.reactantAtoms).br ≠ p.targetAtoms.br + p.leavingDelta.br ∨
+            (sumAtoms p.reactantAtoms).i ≠ p.targetAtoms.i + p.leavingDelta.i) :
+    checkBuyOrMake p ≠ none := by
+  apply atom_imbalance_rejected p hmake
+  intro heq
+  rcases hhal with hf | hcl | hbr | hi
+  · apply hf; have := congrArg AtomVec.f heq; simpa [AtomVec.add] using this
+  · apply hcl; have := congrArg AtomVec.cl heq; simpa [AtomVec.add] using this
+  · apply hbr; have := congrArg AtomVec.br heq; simpa [AtomVec.add] using this
+  · apply hi; have := congrArg AtomVec.i heq; simpa [AtomVec.add] using this
+
+/-- Hard boundary theorem 6: Missing or unbalanced Boron (`B`) in Suzuki-Miyaura couplings is rejected. -/
+theorem suzuki_boron_imbalance_rejected (p : MakeOrBuyProposal)
+    (hmake : p.isDirectBuy = false)
+    (hb : (sumAtoms p.reactantAtoms).b ≠ p.targetAtoms.b + p.leavingDelta.b) :
+    checkBuyOrMake p ≠ none := by
+  apply atom_imbalance_rejected p hmake
+  intro heq
+  apply hb
+  have := congrArg AtomVec.b heq
+  simpa [AtomVec.add] using this
+
+/-- Hard boundary theorem 7: Unbalanced `P`, `Si`, `metal`, or `otherHeavy` synthons are rejected. -/
+theorem main_group_or_metal_imbalance_rejected (p : MakeOrBuyProposal)
+    (hmake : p.isDirectBuy = false)
+    (hm : (sumAtoms p.reactantAtoms).p ≠ p.targetAtoms.p + p.leavingDelta.p ∨
+          (sumAtoms p.reactantAtoms).si ≠ p.targetAtoms.si + p.leavingDelta.si ∨
+          (sumAtoms p.reactantAtoms).metal ≠ p.targetAtoms.metal + p.leavingDelta.metal ∨
+          (sumAtoms p.reactantAtoms).otherHeavy ≠ p.targetAtoms.otherHeavy + p.leavingDelta.otherHeavy) :
+    checkBuyOrMake p ≠ none := by
+  apply atom_imbalance_rejected p hmake
+  intro heq
+  rcases hm with hp | hsi | hmet | hoth
+  · apply hp; have := congrArg AtomVec.p heq; simpa [AtomVec.add] using this
+  · apply hsi; have := congrArg AtomVec.si heq; simpa [AtomVec.add] using this
+  · apply hmet; have := congrArg AtomVec.metal heq; simpa [AtomVec.add] using this
+  · apply hoth; have := congrArg AtomVec.otherHeavy heq; simpa [AtomVec.add] using this
+
 /-! ## 2. 3D Cost-LeadTime-Greenness (`PMI`) Pareto Dominance -/
 
 /-- Exact fixed-point 3D procurement objective `(costCentsPerGram, leadTimeDays, pmiPermille)`. -/
@@ -218,10 +287,10 @@ def demoValidRoute : MakeOrBuyProposal :=
     steps := 1
     maxSteps := 2
     bondIsAcyclic := true
-    targetAtoms := { c := 12, n := 3, o := 1, s := 0, hal := 0 }
-    leavingDelta := { c := 0, n := 0, o := 0, s := 0, hal := 1 }
-    reactantAtoms := [ { c := 4, n := 2, o := 0, s := 0, hal := 1 },
-                       { c := 8, n := 1, o := 1, s := 0, hal := 0 } ]
+    targetAtoms := { c := 12, n := 3, o := 1, s := 0 }
+    leavingDelta := { br := 1 }
+    reactantAtoms := [ { c := 4, n := 2, br := 1 },
+                       { c := 8, n := 1, o := 1 } ]
     allLeavesInStock := true
     costComplete := true
     isUsdPerGram := true
@@ -231,6 +300,30 @@ def demoValidRoute : MakeOrBuyProposal :=
     commercialMode := true }
 
 #guard (checkBuyOrMake demoValidRoute).isNone == true
+
+-- Valid 4-fluorobiphenyl Suzuki coupling: C12H9F + {Br:1, B:1, O:2} = FC6H4Br + C6H5B(OH)2
+def demoValidSuzuki : MakeOrBuyProposal :=
+  { demoValidRoute with
+    targetAtoms   := { c := 12, f := 1 }
+    leavingDelta  := { o := 2, br := 1, b := 1 }
+    reactantAtoms := [ { c := 6, f := 1, br := 1 },
+                       { c := 6, o := 2, b := 1 } ] }
+
+#guard (checkBuyOrMake demoValidSuzuki).isNone == true
+
+-- Bogus trans-halogenation + missing Boron witness (C12H9F from C6H5Cl + C6H5IO2) -> DENIED
+def bogusTranshalogenSuzuki : MakeOrBuyProposal :=
+  { demoValidSuzuki with
+    reactantAtoms := [ { c := 6, cl := 1 },
+                       { c := 6, o := 2, i := 1 } ] }
+
+#guard (checkBuyOrMake bogusTranshalogenSuzuki).isSome == true
+
+-- Missing Boron on Suzuki boronic acid reactant -> DENIED
+#guard (checkBuyOrMake
+         { demoValidSuzuki with
+           reactantAtoms := [ { c := 6, f := 1, br := 1 },
+                              { c := 6, o := 2, b := 0 } ] }).isSome == true
 
 -- Endocyclic ring cleavage (`bondIsAcyclic = false`) -> DENIED
 #guard (checkBuyOrMake { demoValidRoute with bondIsAcyclic := false }).isSome == true
@@ -243,7 +336,7 @@ def demoValidRoute : MakeOrBuyProposal :=
 
 -- Heavy-atom imbalance (`c := 11` instead of `12`) -> DENIED
 #guard (checkBuyOrMake
-         { demoValidRoute with targetAtoms := { c := 11, n := 3, o := 1, s := 0, hal := 0 } }).isSome == true
+         { demoValidRoute with targetAtoms := { c := 11, n := 3, o := 1 } }).isSome == true
 
 -- Green catalytic route dominates slow high-waste route
 #guard paretoDominates

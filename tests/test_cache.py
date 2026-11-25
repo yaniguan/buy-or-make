@@ -261,3 +261,120 @@ def test_response_cache_ttl_and_refresh(tmp_path: Path) -> None:
         refreshing_cache.set("k_old", "pubchem_pug", {"v": 2})
         got = refreshing_cache.get("k_old")
         assert got is not None and got[0] == {"v": 2}
+
+
+def _mp_cache_writer(args: tuple[str, int, int]) -> int:
+    db_path_str, worker_id, n_writes = args
+    with ResponseCache(Path(db_path_str)) as c:
+        for i in range(n_writes):
+            key = f"mp:w{worker_id}:k{i}"
+            c.set(key, "pubchem_pug", {"worker": worker_id, "idx": i})
+            got = c.get(key)
+            assert got is not None and got[0]["idx"] == i
+    return n_writes
+
+
+def test_sqlite_wal_busy_timeout_multithread_multiprocess_and_readonly_uris(
+    tmp_path: Path,
+) -> None:
+    import json
+    import multiprocessing as mp
+    import os
+    import sqlite3
+    import stat
+    from concurrent.futures import ThreadPoolExecutor
+
+    from buyormake.routes import ReactionLookupBackend
+    from buyormake.stock import LocalStockBackend
+
+    cache_db = tmp_path / "shared_cache.sqlite"
+    with ResponseCache(cache_db) as cache:
+        assert cache._conn is not None
+        jmode = cache._conn.execute("PRAGMA journal_mode").fetchone()[0]
+        btimeout = cache._conn.execute("PRAGMA busy_timeout").fetchone()[0]
+        assert str(jmode).lower() == "wal"
+        assert int(btimeout) == 30000
+
+        # 1. >= 8 concurrent threads reading & writing shared ResponseCache
+        def _thread_worker(tid: int) -> int:
+            for idx in range(25):
+                k = f"thr:{tid}:{idx}"
+                cache.set(k, "pubchem_pug", {"tid": tid, "idx": idx})
+                res = cache.get(k)
+                assert res is not None and res[0]["tid"] == tid
+            return 25
+
+        with ThreadPoolExecutor(max_workers=10) as pool:
+            counts = list(pool.map(_thread_worker, range(10)))
+        assert sum(counts) == 250
+
+    # 2. Multi-process concurrent writers against shared cache.sqlite
+    ctx = mp.get_context("spawn")
+    with ctx.Pool(processes=4) as proc_pool:
+        mp_counts = proc_pool.map(
+            _mp_cache_writer,
+            [(str(cache_db), wid, 15) for wid in range(4)],
+        )
+    assert sum(mp_counts) == 60
+
+    # 3. Read-only mode on ResponseCache skips DDL & writes cleanly
+    missing_ro_db = tmp_path / "nonexistent_subdir" / "ro_cache.sqlite"
+    with ResponseCache(missing_ro_db, readonly=True) as ro_missing:
+        assert ro_missing.get("any") is None
+        assert not missing_ro_db.exists()
+
+    with ResponseCache(cache_db, readonly=True) as ro_existing:
+        got_mp = ro_existing.get("mp:w0:k0")
+        assert got_mp is not None and got_mp[0]["worker"] == 0
+
+    # 4. Read-only stock.sqlite and reactions.sqlite queried across 10 worker threads
+    stock_db = tmp_path / "ro_stock.sqlite"
+    sc = sqlite3.connect(str(stock_db))
+    sc.execute(
+        "CREATE TABLE stock (inchikey TEXT, vendor TEXT, source_id TEXT, source_url TEXT, fetched_utc TEXT, license TEXT)"
+    )
+    eth_ik = normalize_smiles("CCO").inchikey  # type: ignore[union-attr]
+    asp_ik = normalize_smiles("CC(=O)Oc1ccccc1C(=O)O").inchikey  # type: ignore[union-attr]
+    sc.execute(
+        "INSERT INTO stock VALUES (?, 'V1', 'local_stock', 'https://ex/1', '2026-11-18T00:00:00Z', 'CC0-1.0')",
+        (eth_ik,),
+    )
+    sc.commit()
+    sc.close()
+
+    rxn_db = tmp_path / "ro_reactions.sqlite"
+    rc = sqlite3.connect(str(rxn_db))
+    rc.execute(
+        "CREATE TABLE reactions (id INTEGER PRIMARY KEY, product_inchikey TEXT, product_smiles TEXT, "
+        "reactants_json TEXT, reaction_smiles TEXT, reference TEXT, source TEXT)"
+    )
+    rc.execute(
+        "INSERT INTO reactions (product_inchikey, product_smiles, reactants_json, reaction_smiles, reference, source) "
+        "VALUES (?, 'CC(=O)Oc1ccccc1C(=O)O', ?, 'CC(=O)O.O=C(O)c1ccccc1O>>CC(=O)Oc1ccccc1C(=O)O', 'ref1', 'uspto_lookup')",
+        (asp_ik, json.dumps(["CC(=O)O", "O=C(O)c1ccccc1O"])),
+    )
+    rc.commit()
+    rc.close()
+
+    os.chmod(stock_db, stat.S_IREAD)
+    os.chmod(rxn_db, stat.S_IREAD)
+    try:
+        stock_backend = LocalStockBackend([stock_db])
+        rxn_backend = ReactionLookupBackend(rxn_db)
+        try:
+            with ThreadPoolExecutor(max_workers=10) as pool:
+                s_res = list(pool.map(lambda _: len(stock_backend.lookup(eth_ik)), range(30)))
+                r_res = list(
+                    pool.map(
+                        lambda _: len(rxn_backend.one_step(asp_ik, "CC(=O)Oc1ccccc1C(=O)O")),
+                        range(30),
+                    )
+                )
+            assert all(n == 1 for n in s_res)
+            assert all(n == 1 for n in r_res)
+        finally:
+            stock_backend.close()
+            rxn_backend.close()
+    finally:
+        os.chmod(stock_db, stat.S_IWRITE | stat.S_IREAD)
+        os.chmod(rxn_db, stat.S_IWRITE | stat.S_IREAD)

@@ -222,3 +222,48 @@ def test_labshift_procurement_release_time_handoff() -> None:
         "Aspirin": 2 * 1440,
         "Analog-3": 4 * 1440 + 2 * 240,
     }
+
+
+def test_evaluate_candidates_persists_leaf_offers_for_automatic_handoff(tmp_path) -> None:
+    from buyormake import build_precursor_attribution_basis, evaluate_candidates
+
+    stock_tsv = tmp_path / "stock.tsv"
+    stock_tsv.write_text(
+        "smiles\tvendor\tcatalog_id\tpack_value\tpack_unit\tprice\tcurrency\tlead_time_days\tin_stock\tsource_id\tsource_url\tlicense\n"
+        "COc1ccc(C(=O)O)cc1\tRefV\tMBA-1\t1.0\tg\t0.40\tUSD\t2\ttrue\tlocal_stock\thttps://example.org/mba\tCC0-1.0\n"
+        "Nc1ccc(Br)cc1\tRefV\tBRA-2\t1.0\tg\t0.80\tUSD\t2\ttrue\tlocal_stock\thttps://example.org/bra\tCC0-1.0\n"
+        "OB(O)c1ccccn1\tRefV\tPYB-3\t1.0\tg\t3.50\tUSD\t3\ttrue\tlocal_stock\thttps://example.org/pyb\tCC0-1.0\n",
+        encoding="utf-8",
+    )
+
+    _, records = evaluate_candidates(
+        ["COc1ccc(C(=O)Nc2ccc(-c3ccccn3)cc2)cc1"],
+        candidate_names=["Analog-3"],
+        max_steps=2,
+        backends=("local_stock",),
+        route_backend="template",
+        offline=True,
+        cache_path=tmp_path / "cache.sqlite",
+        stock_paths=[stock_tsv],
+        reaction_db_path=tmp_path / "no_rxn.sqlite",
+        scscore_weights=tmp_path / "no_sc.json.gz",
+    )
+    rec = records[0]
+    assert len(rec.leaf_offers) == 3
+    assert rec.lead_time_days == 3
+    assert rec.moq_pack_g == pytest.approx(1.0)
+    assert len(rec.precursor_smiles) == 3
+
+    # Calling to_procurement_constraint(rec) WITHOUT leaf_offers_by_inchikey uses rec.leaf_offers!
+    c_auto = to_procurement_constraint(rec)
+    assert c_auto.schedulable is True
+    assert c_auto.lead_time_days == 3
+    assert c_auto.lead_time_complete is True
+    assert c_auto.release_time_minutes == 4800
+    assert c_auto.moq_pack_g == pytest.approx(1.0)
+    assert c_auto.min_order_outlay_usd == pytest.approx(4.70)
+    assert build_labshift_release_map([rec]) == {"Analog-3": 4800}
+
+    basis, rxn_steps = build_precursor_attribution_basis(rec.routes[0], rec.leaf_offers)
+    assert {b["catalog_id"] for b in basis} == {"MBA-1", "BRA-2", "PYB-3"}
+    assert len(rxn_steps) == 2

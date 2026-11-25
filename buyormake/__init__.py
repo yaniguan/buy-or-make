@@ -3,14 +3,21 @@
 from .handoff import (
     ProcurementScheduleConstraint,
     build_labshift_release_map,
+    build_precursor_attribution_basis,
     to_procurement_constraint,
 )
-from .rank import cost_aware_rank, evaluate_candidates, filter_proposals
+from .rank import (
+    cost_aware_rank,
+    evaluate_candidates,
+    filter_decisions_from_ranked,
+    filter_proposals,
+)
 from .schema import (
     SCHEMA_VERSION,
     AssayfoldRecord,
     AvailabilityRecord,
     FilterSummary,
+    InChIKeyMatchLiteral,
     Molecule,
     Offer,
     ProposalDecision,
@@ -35,6 +42,7 @@ __all__ = [
     "AssayfoldRecord",
     "AvailabilityRecord",
     "FilterSummary",
+    "InChIKeyMatchLiteral",
     "Molecule",
     "Offer",
     "ProcurementScheduleConstraint",
@@ -49,9 +57,11 @@ __all__ = [
     "SOURCES",
     "SOURCE_BY_ID",
     "build_labshift_release_map",
+    "build_precursor_attribution_basis",
     "cost_aware_rank",
     "evaluate_candidates",
     "export_json_schema",
+    "filter_decisions_from_ranked",
     "filter_proposals",
     "make_assayfold_record_id",
     "select_record_license",

@@ -56,14 +56,17 @@ buy-or-make/
 │   ├── scores.py                         # RDKit SAscore & overflow-safe standalone NumPy SCScore
 │   ├── sources.py                        # 12 license-audited data & model Source definitions
 │   └── stock.py                          # Multi-format LocalStockBackend & PubChemVendorBackend
+├── community_extensions/                 # 3D cost-lead-PMI Pareto router & shared-synthon cart optimizer
 ├── docs/
-│   └── ARCHITECTURE_AND_HISTORY.md       # Deep technical profile (Object, Data, Model, History)
+│   └── ARCHITECTURE_AND_HISTORY.md       # Deep technical profile (Object, Data, Model, History, Wire)
 ├── examples/
 │   ├── demo.py                           # 20-molecule cold vs. cached CPU benchmark script
 │   └── demo_output.md                    # Recorded CPU runtime and candidate triage table
+├── lean/                                 # Lean 4 formalization (BuyOrMakeLean guardrails & theorems)
 ├── schema/                               # Exported JSON Schemas (offer, route, source, rank_result, ...)
 ├── scripts/                              # Checksum-verified local fetchers & reaction/SDF indexers
-├── tests/                                # Offline pytest suite (cache, cli, cost, handoff, indexers, ...)
+├── tests/                                # Offline pytest suite (wire, cache, cli, cost, handoff, ...)
+├── autolab_wire.py                       # Layer L5 Auto-Lab 15-repo wire node (autolab-wire/v1)
 ├── LICENSE                               # MIT License
 ├── pyproject.toml                        # Build metadata, dependencies, and optional extras
 └── README.md                             # Usage guide, source license table, demo metrics & caveats
@@ -111,6 +114,18 @@ print("kept:", len(summary.kept), "over_budget:", len(summary.over_budget))
 ```
 
 Ranking order: `buyable` (`USD/g` ascending, then other units grouped by unit, then `null` price) < `makeable` (fewer steps, complete `USD` cost before other currencies before partial cost before `null`) < `unknown` < `invalid`.
+
+## 15-Repository Auto-Lab Wire Contract (`autolab-wire/v1`)
+
+[`autolab_wire.py`](autolab_wire.py) exposes the deterministic offline `L5` wire node (`REPO_ID = "buy-or-make"`, `LAYER = "L5"`) for the 15-repository Auto-Lab loop:
+
+- **Upstream & Downstream Links**: Consumes candidate molecules admitted by [`lab-decide`](https://github.com/yaniguan/lab-decide) (`L6` calibrated conformal decision gate) with molecule/offer schemas aligned to [`assayfold`](https://github.com/yaniguan/assayfold) (`L0` open assay hub), and hands off verified procurement status and lead-time constraints to [`labshift`](https://github.com/yaniguan/labshift) (`L5` multi-instrument window scheduler).
+- **Packet Semantics (`process_packet(packet: dict) -> dict`)**:
+  - Resolves all repository paths via `Path(__file__).resolve().parent` (never `os.getcwd()`) and runs strictly offline (zero live HTTP requests) against a deterministic built-in `listed_catalog` reference stock (e.g., aspirin `"CC(=O)Oc1ccccc1C(=O)O"` at `$0.42/g` and standard building blocks).
+  - Writes `out["procurement"]` containing core triage fields (`smiles`, `status`, `listed_price_usd_per_g`, `n_steps`, `price_basis`, `within_budget`) alongside `labshift` scheduling/MOQ fields (`lead_time_days`, `lead_time_complete`, `release_time_minutes`, `moq_pack_g`, `selected_pack_size`, `min_order_outlay_usd`) and `lab-attrib` stoichiometric attribution records (`precursor_smiles`, `precursor_basis`, `reaction_steps`), keeping unlisted prices strictly `None` (`price_basis="unknown"`, `within_budget=False`).
+  - Enforces the Lean 4 `unpriced_never_passes_budget` and acyclic `!@` heavy-atom conservation invariants (`lean/BuyOrMakeLean.lean`): when `require_priced_within_budget=True` and `listed_price_usd_per_g is None` or exceeds `budget_usd_per_g`, sets `halted=True` and `halt_reason="L5_PROCUREMENT_BUDGET_BLOCK"`.
+  - Appends structured execution records to `out["trace"]` and `out["bottom_reasoning_traces"]` (`invariant="unpriced_never_passes_budget"`).
+- **15-Repository Stack**: Operates alongside `lab-ears` (`L2`), `lab-ask-why` (`L6`), `lab-decide` (`L6`), `lab-automation-atlas` (`L5`), `buy-or-make` (`L5`), `labshift` (`L5`), `lab-rehearsal` (`L4`), `lab-verify` (`L4`), `stepbot` (`L1`), `lab-hands` (`L1`), `lab-feet` (`L0`), `lab-attrib` (`L4` post-execution causal blame, NNLS XRD deconvolution & SHA-256 certified ledger), `twinstep` (`L3`), `labfill` (`L3`), and `labbench-posttrain` (`L3`).
 
 ## Schema summary
 
