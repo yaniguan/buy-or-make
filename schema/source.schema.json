@@ -121,6 +121,18 @@
       "default": null,
       "title": "Size Full"
     },
+    "spdx_license": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Spdx License"
+    },
     "status": {
       "default": "integrated",
       "enum": [

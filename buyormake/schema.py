@@ -26,10 +26,13 @@ _LICENSE_RESTRICTIVENESS: dict[str, int] = {
     "BSD-2-Clause": 30,
     "BSD-3-Clause": 30,
     "Apache-2.0": 35,
+    "CC-BY-3.0": 50,
     "CC-BY-4.0": 50,
+    "CC-BY-SA-3.0": 70,
     "CC-BY-SA-4.0": 70,
     "CC-BY-NC-4.0": 85,
     "CC-BY-NC-SA-4.0": 90,
+    "LicenseRef-Custom-Terms": 100,
     "custom/terms": 100,
 }
 
@@ -132,6 +135,7 @@ class Source(_Model):
     name: str
     homepage: str
     license: str
+    spdx_license: Optional[str] = None
     license_url: Optional[str] = None
     license_evidence: str
     license_quote: Optional[str] = None
@@ -146,6 +150,16 @@ class Source(_Model):
     size_full: Optional[str] = None
     status: Literal["integrated", "fetch_only", "not_used", "planned"] = "integrated"
     notes: Optional[str] = None
+
+    @model_validator(mode="after")
+    def _populate_spdx_license(self) -> "Source":
+        if self.spdx_license is not None and not self.spdx_license.strip():
+            raise ValueError("Source.spdx_license must be non-empty when provided")
+        if self.spdx_license is None:
+            self.spdx_license = (
+                "LicenseRef-Custom-Terms" if self.license == "custom/terms" else self.license
+            )
+        return self
 
 
 class Molecule(_Model):
