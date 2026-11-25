@@ -137,7 +137,8 @@ def main(argv: Optional[list[str]] = None) -> int:
     p_schema = sub.add_parser("export-schema", help="Export JSON Schema files to schema/.")
     p_schema.add_argument("--out", type=Path, default=Path("schema"), help="Output directory.")
 
-    sub.add_parser("sources", help="List evaluated data sources and license statuses.")
+    p_sources = sub.add_parser("sources", help="List evaluated data sources and license statuses.")
+    p_sources.add_argument("--json", action="store_true", dest="as_json", help="Output JSON.")
 
     args = parser.parse_args(argv)
 
@@ -148,11 +149,14 @@ def main(argv: Optional[list[str]] = None) -> int:
         return 0
 
     if args.command == "sources":
+        if args.as_json:
+            print(json.dumps([s.model_dump(mode="json") for s in SOURCES], indent=2))
+            return 0
         for s in SOURCES:
             print(
                 f"{s.id:26s} status={s.status:10s} license={s.license:14s} "
-                f"check={s.license_check_method:8s} redist={str(s.redistribution_ok):5s} "
-                f"comm={str(s.commercial_use_ok):5s}"
+                f"spdx={(s.spdx_license or '-'):24s} check={s.license_check_method:8s} "
+                f"redist={str(s.redistribution_ok):5s} comm={str(s.commercial_use_ok):5s}"
             )
         return 0
 

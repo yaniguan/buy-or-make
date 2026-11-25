@@ -34,25 +34,32 @@ Within the [Auto-Lab](https://github.com/yaniguan/auto-lab) Brain/Body architect
 
 ## 2. Data
 
-### Evaluated Source Registry & License Gate (`buyormake/sources.py`)
-Twelve external chemical vendor, reaction, stock, and scoring sources were audited on `2026-11-18` and encoded as validated `Source` objects (`buy-or-make sources`, with ISO `YYYY-MM-DD` `license_checked` and explicit `license_check_method="direct"|"indirect"`):
+### Evaluated Source Registry & License Gate (`buyormake/sources.py`, `buyormake/open_corpora.py`)
+Nineteen external chemical vendor, building-block, natural-product, patent-compound, reaction, and retrosynthesis benchmark sources were audited (`12` initial sources on `2026-11-18` and `7` 2024–2026 open chemistry corpora on `2026-11-25`) and encoded as validated `Source` objects (`buy-or-make sources`, with explicit `spdx_license`, ISO `YYYY-MM-DD` `license_checked`, and `license_check_method="direct"|"indirect"`):
 
-| Source ID | Modality / Role | License | Commercial OK | Redistribution OK | Status |
+| Source ID | Modality / Role | SPDX / License | Commercial OK | Redistribution OK | Status |
 |---|---|---|---|---|---|
-| `pubchem_pug` | Live vendor names, RegistryIDs & URLs (`<= 5 req/s`; no prices) | `custom/terms` (NCBI + depositor terms) | Yes | **No** (local SQLite cache only) | `integrated` |
+| `pubchem_pug` | Live vendor names, RegistryIDs & URLs (`<= 5 req/s`; no prices) | `LicenseRef-Custom-Terms` (`custom/terms`) | Yes | **No** (local SQLite cache only) | `integrated` |
 | `rdkit_sascore` | Fragment + complexity heuristic (`1`–`10`) | `BSD-3-Clause` | Yes | Yes | `integrated` |
 | `scscore` | Pretrained neural synthetic complexity (`1`–`5`, `6.18 MB`) | `MIT` | Yes | Yes | `integrated` |
-| `zinc` | Purchasable SMILES tranches (`scripts/fetch_zinc.py`, `indirect` check) | `custom/terms` | Yes | **No** | `fetch_only` |
-| `enamine_bb` | Building block SDFs after registration (`scripts/fetch_enamine.py`) | `custom/terms` | Yes (own use) | **No** | `fetch_only` |
-| `emolecules` | Free `version.smi.gz` (`~350 MB`, no prices; `scripts/fetch_emolecules.py`) | `custom/terms` | **No** (requires ePlus) | **No** | `fetch_only` |
-| `mcule` | Free in-stock building blocks (`~151 MB`; `scripts/fetch_mcule.py`) | `custom/terms` | Yes (own use) | **No** | `fetch_only` |
+| `zinc` | Purchasable SMILES tranches (`scripts/fetch_zinc.py`, `indirect` check) | `LicenseRef-Custom-Terms` (`custom/terms`) | Yes | **No** | `fetch_only` |
+| `enamine_bb` | Building block SDFs after registration (`scripts/fetch_enamine.py`) | `LicenseRef-Custom-Terms` (`custom/terms`) | Yes (own use) | **No** | `fetch_only` |
+| `emolecules` | Free `version.smi.gz` (`~350 MB`, no prices; `scripts/fetch_emolecules.py`) | `LicenseRef-Custom-Terms` (`custom/terms`) | **No** (requires ePlus) | **No** | `fetch_only` |
+| `mcule` | Free in-stock building blocks (`~151 MB`; `scripts/fetch_mcule.py`) | `LicenseRef-Custom-Terms` (`custom/terms`) | Yes (own use) | **No** | `fetch_only` |
 | `aizynthfinder_models` | MCTS retrosynthesis + USPTO ONNX models (`scripts/fetch_aizynth.py`) | `CC-BY-4.0` (models) / `MIT` (code) | Yes | Yes | `fetch_only` |
-| `aizynthfinder_zinc_stock` | `zinc_stock_17_04_20.hdf5` (`663 MB`, ZINC-derived) | `custom/terms` | **No** | **No** | `fetch_only` |
+| `aizynthfinder_zinc_stock` | `zinc_stock_17_04_20.hdf5` (`663 MB`, ZINC-derived) | `LicenseRef-Custom-Terms` (`custom/terms`) | **No** | **No** | `fetch_only` |
 | `uspto_lowe` | Lowe 1976–Sep 2016 patent reactions (`75.2 MB`; `scripts/fetch_uspto.py`) | `CC0-1.0` | Yes | Yes | `fetch_only` |
 | `ord_data` | Open Reaction Database Parquet shards (`scripts/fetch_ord.py`) | `CC-BY-SA-4.0` | Yes | Yes (ShareAlike) | `fetch_only` |
 | `rascore` | Reymond Group retrosynthetic classifier (`52.4 MB`) | `MIT` | Yes | Yes | `not_used` |
+| `paroutes` | Multi-step patent routes (`n1`/`n5`), stopping stocks & reactions (Zenodo `7341155`) | `CC-BY-4.0` | Yes | Yes | `fetch_only` |
+| `chembl` | `chembl_37` bioactive canonical SMILES & InChIKeys (May 2026, SHA-256 verified) | `CC-BY-SA-3.0` | Yes | Yes (ShareAlike) | `fetch_only` |
+| `surechembl` | Biweekly patent compounds Parquet (`bulk_data/latest`, `2026-11-03`) | `CC-BY-4.0` | Yes | Yes | `fetch_only` |
+| `coconut` | COCONUT 2.0 ~700k open natural products (`2026-11` S3 / Zenodo `13897048`) | `CC0-1.0` | Yes | Yes | `fetch_only` |
+| `orderly` | Deduplicated, standardized ORD forward/retro Parquet benchmarks (JCIM 2024) | `CC-BY-4.0` | Yes | Yes | `fetch_only` |
+| `syntheseus_uspto_50k` | Microsoft `Syntheseus` `USPTO-50K` & `Retro*` stock inventory (2024–2026) | `MIT` | Yes | Yes | `fetch_only` |
+| `synplanner_data` | Standardized USPTO reactions, building blocks & SAscore targets (HF Hub) | `MIT` | Yes | Yes | `fetch_only` |
 
-All fetched files stream into `<dest>.part`, verify pinned SHA-256 / MD5 / LFS digests via `buyormake.canonical.atomic_download`, and atomically `os.replace` into gitignored `data/` paths (`.gitignore`).
+All fetched files stream into `<dest>.part`, verify pinned SHA-256 / MD5 / LFS digests via `buyormake.canonical.atomic_download`, and atomically `os.replace` into gitignored `data/` paths (`.gitignore`). Non-vendor reference corpora (`chembl`, `surechembl`, `coconut`) land in `data/reference_compounds.sqlite` (and sealed `AssayfoldRecord` envelopes) rather than `data/stock.sqlite`, preventing unpurchasable reference compounds from being mistaken for commercial vendor stock.
 
 ### Unified Pydantic v2 & JSON Schemas (`buyormake/schema.py`, `schema/`)
 All domain models inherit `_Model(BaseModel)` with `ConfigDict(extra="forbid")`, enforcing finite floats (`allow_nan=False`), non-negative prices/lead times, and `price`/`currency`/`price_basis` consistency. Canonical hashing (`AvailabilityRecord.content_hash()` and `AssayfoldRecord.content_hash()`) strips `record_hash` and volatile `provenance.recorded_utc` before computing SHA-256.
@@ -105,7 +112,9 @@ Evaluates 20 curated inputs (`6` common drugs, `6` building blocks/reagents, `6`
 |---|---|---|---|
 | `76991c8` (`main`) | `2026-11-18` | Yani Guan | Initial release (`Add buy-or-make: cost-aware availability check for candidate molecules`): `buyormake` package, 5 exported JSON Schemas, 8 fetch scripts, 20-molecule CPU demo, and `pytest` suite. |
 | `bbfa649` (`origin/review-fixes`) | `2026-11-18` | Yani Guan | Set `cost_complete = False` on `buyable` rows, prevented `cheapest_offer_for_target` from comparing mixed currencies or mismatched non-mass pack sizes, added `estimate_route_cost_detailed` / `route_cost_method`, marked ZINC indirect license check, strengthened `SCScore` test, and clarified demo zero-price caveats. |
-| `fix/resolve-audit-issues` | `2026-11-22` | Yani Guan | Enforced acyclic `!@` SMARTS + exact element conservation (`Analog-6` true SnAr disconnection), guarded PubChem cache against transient `5xx`/`429`/timeout errors with throttled `POST` + retries + TTL, propagated route/leaf licenses, partitioned `_rank_sort_key` and `filter_proposals` unit/completeness policies, added multi-step lookup + spectator filtering + AiZynth score/OR-node/stock fixes, added salt fallback + InChIKey deduplication, priced SQLite + `h5py` HDF5 support, atomic SHA-256 downloads, CLI `filter`/`--records-out`/`.smi` names, and `assayfold` + `labshift` handoff helpers. |
+| `fix/resolve-audit-issues` (`cc2d33e`) | `2026-11-22` | Yani Guan | Enforced acyclic `!@` SMARTS + exact element conservation (`Analog-6` true SnAr disconnection), guarded PubChem cache against transient `5xx`/`429`/timeout errors with throttled `POST` + retries + TTL, propagated route/leaf licenses, partitioned `_rank_sort_key` and `filter_proposals` unit/completeness policies, added multi-step lookup + spectator filtering + AiZynth score/OR-node/stock fixes, added salt fallback + InChIKey deduplication, priced SQLite + `h5py` HDF5 support, atomic SHA-256 downloads, CLI `filter`/`--records-out`/`.smi` names, and `assayfold` + `labshift` handoff helpers. |
+| `fix/phase2-audit-and-wire` (`#32`, `5fd1afb`) | `2026-11-25` | Yani Guan | Resolved Phase 2 audit issues (`#26`–`#31`: symmetric desalting, optional stereo-relaxed 14-char skeletal disclosure, MOQ outlay & yield-adjusted cost bounds, chemoselectivity SMARTS guards, SQLite WAL/readonly locking, and `BuyOrMakeLean` proofs) and wired `autolab_wire.py`. |
+| `feat/open-datasets-2026` | `2026-11-25` | Yani Guan | Audited and integrated 7 open 2024–2026 chemical stock, compound, reaction, and retrosynthesis corpora (`PaRoutes 2.0`, `ChEMBL 37`, `SureChEMBL`, `COCONUT 2.0`, `ORDerly`, `Syntheseus USPTO-50K & Retro*`, `SynPlanner`) with `Source.spdx_license` schema fields, `buyormake/open_corpora.py` checksummed multi-format adapters, and `scripts/fetch_open_datasets_2026.py`. |
 
 ---
 

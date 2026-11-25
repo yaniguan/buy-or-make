@@ -53,6 +53,10 @@ _STEP_SOURCE_TO_SOURCE_ID = {
     "ord_lookup": "ord_data",
     "uspto_lookup": "uspto_lowe",
     "aizynthfinder": "aizynthfinder_models",
+    "paroutes_lookup": "paroutes",
+    "orderly_lookup": "orderly",
+    "syntheseus_uspto_50k_lookup": "syntheseus_uspto_50k",
+    "synplanner_lookup": "synplanner_data",
 }
 
 
@@ -108,7 +112,9 @@ def _collect_provenance_and_licenses(
 
     for r in routes:
         for st in r.steps:
-            mapped_src = _STEP_SOURCE_TO_SOURCE_ID.get(st.source)
+            mapped_src = _STEP_SOURCE_TO_SOURCE_ID.get(st.source) or (
+                st.source if st.source in SOURCE_BY_ID else None
+            )
             if mapped_src:
                 used_set.add(mapped_src)
         for leaf_smi in r.leaves:

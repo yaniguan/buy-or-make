@@ -31,7 +31,7 @@ buy-or-make filter /tmp/candidates.smi --max-steps 2 --budget 25.0 --budget-curr
 Full architectural documentation, cost/ranking invariants, commit and branch evolution, and sibling-repository contracts are maintained in [`docs/ARCHITECTURE_AND_HISTORY.md`](docs/ARCHITECTURE_AND_HISTORY.md):
 
 - **Object**: Cost-aware molecular availability and retrosynthetic procurement triage (`L5`) verifying whether candidate molecules from `L6`/`L5` planners (`lab-ask-why`, `lab-decide`) are directly purchasable or makeable in $N$ steps from purchasable building blocks before wet-lab scheduling (`labshift`).
-- **Data**: 12 license-audited chemical vendor, reaction, stock, and scoring sources (`buyormake/sources.py`, gitignored `data/` fetch-only isolation with atomic `.part` checksum verification), 5 strict Pydantic v2 / JSON Schema contracts (`extra="forbid"`, aligned with `assayfold`), and a 20-molecule CPU benchmark (`examples/demo.py`).
+- **Data**: 19 license-audited chemical vendor, building-block, natural-product, patent-compound, reaction, and retrosynthesis benchmark sources (`buyormake/sources.py` + `buyormake/open_corpora.py`, gitignored `data/` fetch-only isolation with atomic `.part` checksum verification), 5 strict Pydantic v2 / JSON Schema contracts (`extra="forbid"`, aligned with `assayfold`), and a 20-molecule CPU benchmark (`examples/demo.py`).
 - **Model**: RDKit canonical/InChIKey normalization with optional salt/counterion parent fallback, live throttled/retry-hardened `PubChem PUG-REST/PUG-View` + multi-format `LocalStockBackend` (including priced SQLite and `h5py`/PyTables HDF5), 3-tier retrosynthesis (`AiZynthFinder` MCTS, multi-step `USPTO`/`ORD` SQLite lookup with spectator filtering, and 17 atom-conserved RDKit SMARTS templates), unit-aware `USD/g` stoichiometric leaf cost estimator, and `SAscore` + overflow-safe NumPy `SCScore`.
 - **Training**: Zero model training in-repo; combines deterministic cheminformatics rules with RDKit's fragment `SAscore` and frozen pretrained Reaxys `SCScore` weights (`6.18 MB`, optional `CC-BY-4.0` `AiZynthFinder` ONNX policies).
 - **History**: Initialized on `main` in `76991c8` (`2026-11-18`), refined in `origin/review-fixes` (`bbfa649`, `2026-11-18`) for `cost_complete`, single-currency/same-pack price comparability, excluded-leaf reporting, and indirect ZINC license-check markers, and hardened on `fix/resolve-audit-issues` with acyclic `!@` SMARTS + element conservation, transient HTTP cache guards, route/leaf license propagation, unit-aware ranking/budget gates, and `assayfold`/`labshift` handoff adapters.
@@ -50,11 +50,12 @@ buy-or-make/
 │   ├── cli.py                            # CLI entry point (rank, filter, export-schema, sources)
 │   ├── cost.py                           # Mass-normalized USD/g offer & leaf-only route cost logic
 │   ├── handoff.py                        # L5 -> L0/L5 adapters (assayfold Record & labshift release times)
+│   ├── open_corpora.py                   # Checksummed 2024-2026 open stock, compound & reaction adapters
 │   ├── rank.py                           # cost_aware_rank, evaluate_candidates, filter_proposals
 │   ├── routes.py                         # AiZynthFinder, multi-step USPTO/ORD lookup & 17 SMARTS templates
 │   ├── schema.py                         # Pydantic v2 models (extra='forbid') & JSON Schema exporter
 │   ├── scores.py                         # RDKit SAscore & overflow-safe standalone NumPy SCScore
-│   ├── sources.py                        # 12 license-audited data & model Source definitions
+│   ├── sources.py                        # 19 license-audited data & model Source definitions
 │   └── stock.py                          # Multi-format LocalStockBackend & PubChemVendorBackend
 ├── community_extensions/                 # 3D cost-lead-PMI Pareto router & shared-synthon cart optimizer
 ├── docs/
@@ -131,7 +132,7 @@ Ranking order: `buyable` (`USD/g` ascending, then other units grouped by unit, t
 
 All models in [`buyormake/schema.py`](buyormake/schema.py) use Pydantic v2 (`extra="forbid"`), enforce finite non-negative numeric invariants, align shared field names (`Source`, `Quantity`, `Uncertainty`, `Provenance`, `Molecule`, `origin`, `schema_version`, `record_hash`) with the `assayfold` hub schema, and export JSON Schemas to `schema/`:
 
-- `Source`: evaluated dataset/API metadata, SPDX or `custom/terms`, `license_evidence`, `license_quote`, ISO `license_checked` (`YYYY-MM-DD`), `license_check_method` (`"direct" | "indirect"`), `commercial_use_ok`, `redistribution_ok`, `status`.
+- `Source`: evaluated dataset/API metadata, `license` + explicit `spdx_license` (SPDX ID or `LicenseRef-Custom-Terms`), `license_evidence`, `license_quote`, ISO `license_checked` (`YYYY-MM-DD`), `license_check_method` (`"direct" | "indirect"`), `commercial_use_ok`, `redistribution_ok`, `status`.
 - `Offer`: `inchikey`, `vendor`, `catalog_id`, `pack_size` (`Quantity`), `purity`, `price` (`float | null`), `currency` (`str | null`), `price_basis` (`"listed_catalog" | "unknown"`), `lead_time_days`, `in_stock`, `source_id`, `source_url`, `fetched_utc`, `license`.
 - `Route` / `RouteStep`: `target_inchikey`, `n_steps`, `steps`, `leaves`, `leaves_purchasable`, `method`, `score`, `est_cost` (`Quantity | null`), `est_cost_method`, `est_cost_complete`.
 - `AvailabilityRecord`: `molecule`, `offers`, `routes`, `sa_scores` (`sascore`, `scscore`, `rascore`), `origin`, `provenance` (propagating target, route-step, and leaf sources), `licenses`, `schema_version`, deterministic `record_hash`, and `.to_assayfold_record()`.
@@ -145,22 +146,29 @@ buy-or-make export-schema --out schema
 
 ## Evaluated sources & licenses
 
-Every source license/terms page was checked on `2026-11-18`, except ZINC, whose terms page was unreachable and was checked indirectly (`license_checked = "2026-11-18"`, `license_check_method = "indirect"` in `buyormake/sources.py`). Non-redistributable datasets are never committed to the repository; fetch scripts stream via `.part` temporary files with checksum verification into the gitignored `data/` directory.
+Every source license/terms page was checked directly (`2026-11-18` for the initial 12 sources and `2026-11-25` for the 7 audited 2024–2026 open chemistry corpora), except ZINC, whose terms page was unreachable and was checked indirectly (`license_checked = "2026-11-18"`, `license_check_method = "indirect"` in `buyormake/sources.py`). Non-redistributable datasets and large bulk dumps are never committed to the repository; fetch scripts stream via `.part` temporary files with checksum verification into the gitignored `data/` directory.
 
-| Source | Role | License | Commercial use | Redistribution | Status | Evidence |
+| Source | Role | SPDX / License | Commercial use | Redistribution | Status | Evidence |
 |---|---|---|---|---|---|---|
-| PubChem PUG-REST & PUG-View | Live chemical vendors & catalog IDs (no prices) | `custom/terms` (NCBI public domain + per-depositor terms) | Yes (per depositor) | No (cached locally only) | `integrated` | [NCBI Policies](https://www.ncbi.nlm.nih.gov/home/about/policies/) |
-| ZINC (ZINC15/ZINC20/ZINC22) | Purchasable / in-stock SMILES subsets | `custom/terms` | Yes ("free to use for everyone") | No (no major portions without written permission) | `fetch_only` | [ZINC Terms](https://wiki.docking.org/index.php/Terms_And_Conditions) |
-| Enamine Building Blocks | Building block SDFs (manual registration) | `custom/terms` | Yes for own use after registration ("Open Structure Data" section) | No (no public republishing) | `fetch_only` | [Enamine Terms](https://enamine.net/terms-of-use) |
-| eMolecules Free Download | Free SMILES + IDs (350 MB; prices require paid ePlus) | `custom/terms` | No (full commercial requires ePlus) | No | `fetch_only` | [eMolecules Readme](https://downloads.emolecules.com/free/2026-11-01/Readme.txt) |
-| Mcule Database | Free in-stock & BB SMILES + IDs (no prices) | `custom/terms` | Yes (own use) | No | `fetch_only` | [Mcule Terms](https://mcule.com/terms/) |
-| AiZynthFinder Code & Models | MCTS retrosynthesis + USPTO policy models | `MIT` (code) / `CC-BY-4.0` (models) | Yes | Yes | `fetch_only` | [AiZynthFinder LICENSE](https://raw.githubusercontent.com/MolecularAI/aizynthfinder/master/LICENSE) |
-| AiZynthFinder ZINC Stock | `zinc_stock_17_04_20.hdf5` (663 MB, ZINC-derived) | `custom/terms` (Figshare says MIT, ZINC-derived) | No | No | `fetch_only` | [Figshare 12334577](https://figshare.com/articles/dataset/12334577) |
+| PubChem PUG-REST & PUG-View | Live chemical vendors & catalog IDs (no prices) | `LicenseRef-Custom-Terms` (`custom/terms`) | Yes (per depositor) | No (cached locally only) | `integrated` | [NCBI Policies](https://www.ncbi.nlm.nih.gov/home/about/policies/) |
+| ZINC (ZINC15/ZINC20/ZINC22) | Purchasable / in-stock SMILES subsets | `LicenseRef-Custom-Terms` (`custom/terms`) | Yes ("free to use for everyone") | No (no major portions without written permission) | `fetch_only` | [ZINC Terms](https://wiki.docking.org/index.php/Terms_And_Conditions) |
+| Enamine Building Blocks | Building block SDFs (manual registration) | `LicenseRef-Custom-Terms` (`custom/terms`) | Yes for own use after registration ("Open Structure Data" section) | No (no public republishing) | `fetch_only` | [Enamine Terms](https://enamine.net/terms-of-use) |
+| eMolecules Free Download | Free SMILES + IDs (350 MB; prices require paid ePlus) | `LicenseRef-Custom-Terms` (`custom/terms`) | No (full commercial requires ePlus) | No | `fetch_only` | [eMolecules Readme](https://downloads.emolecules.com/free/2026-11-01/Readme.txt) |
+| Mcule Database | Free in-stock & BB SMILES + IDs (no prices) | `LicenseRef-Custom-Terms` (`custom/terms`) | Yes (own use) | No | `fetch_only` | [Mcule Terms](https://mcule.com/terms/) |
+| AiZynthFinder Code & Models | MCTS retrosynthesis + USPTO policy models | `CC-BY-4.0` (models) / `MIT` (code) | Yes | Yes | `fetch_only` | [AiZynthFinder LICENSE](https://raw.githubusercontent.com/MolecularAI/aizynthfinder/master/LICENSE) |
+| AiZynthFinder ZINC Stock | `zinc_stock_17_04_20.hdf5` (663 MB, ZINC-derived) | `LicenseRef-Custom-Terms` (`custom/terms`) | No | No | `fetch_only` | [Figshare 12334577](https://figshare.com/articles/dataset/12334577) |
 | USPTO Reactions (Lowe) | Reported patent reactions (1976–Sep 2016) | `CC0-1.0` | Yes | Yes | `fetch_only` | [Figshare 5104873](https://api.figshare.com/v2/articles/5104873) |
 | Open Reaction Database (`ord-data`) | Reported reactions (parquet shards on Hugging Face) | `CC-BY-SA-4.0` | Yes | Yes (ShareAlike) | `fetch_only` | [ord-data LICENSE](https://raw.githubusercontent.com/open-reaction-database/ord-data/main/LICENSE) |
 | RDKit Contrib SA_Score | Synthetic accessibility heuristic (1–10) | `BSD-3-Clause` | Yes | Yes | `integrated` | [RDKit license.txt](https://raw.githubusercontent.com/rdkit/rdkit/master/license.txt) |
 | SCScore (Coley et al.) | Synthetic complexity score (1–5, NumPy) | `MIT` | Yes | Yes | `integrated` | [SCScore LICENSE](https://raw.githubusercontent.com/connorcoley/scscore/master/LICENSE) |
 | RAscore (Reymond Group) | Learned retrosynthetic accessibility (52 MB) | `MIT` | Yes | Yes | `not_used` | [RAscore LICENSE](https://raw.githubusercontent.com/reymond-group/RAscore/master/LICENSE) |
+| PaRoutes 2.0 (`paroutes`) | Multi-step retrosynthesis routes (`n1`/`n5`), stocks & reactions | `CC-BY-4.0` (data) / `Apache-2.0` (code) | Yes | Yes | `fetch_only` | [Zenodo 7341155](https://zenodo.org/api/records/7341155) |
+| ChEMBL 37 (`chembl`) | Bioactive compound SMILES & InChIKeys (May 2026 release) | `CC-BY-SA-3.0` | Yes | Yes (ShareAlike) | `fetch_only` | [ChEMBL 37 README](https://ftp.ebi.ac.uk/pub/databases/chembl/ChEMBLdb/latest/README) |
+| SureChEMBL (`surechembl`) | Patent chemistry Parquet corpus (`bulk_data/latest`, Nov 2026) | `CC-BY-4.0` | Yes | Yes | `fetch_only` | [SureChEMBL Docs](https://chembl.gitbook.io/surechembl/llms-full.txt) |
+| COCONUT 2.0 (`coconut`) | ~700k open natural product structures (`2026-11` dump) | `CC0-1.0` | Yes | Yes | `fetch_only` | [COCONUT About](https://coconut.naturalproducts.net/about) |
+| ORDerly (`orderly`) | Cleaned ORD forward/retrosynthesis Parquet benchmarks (JCIM 2024) | `CC-BY-4.0` | Yes | Yes | `fetch_only` | [Figshare 23298467](https://api.figshare.com/v2/articles/23298467) |
+| Syntheseus USPTO-50K & Retro* (`syntheseus_uspto_50k`) | Single-step `USPTO-50K` & `Retro*` stock inventory (2024–2026) | `MIT` | Yes | Yes | `fetch_only` | [Figshare 25459573](https://api.figshare.com/v2/articles/25459573) |
+| SynPlanner Open Data (`synplanner_data`) | Standardized USPTO reactions, building blocks & SAscore targets | `MIT` | Yes | Yes | `fetch_only` | [HF SynPlanner](https://huggingface.co/api/models/Laboratoire-De-Chemoinformatique/SynPlanner) |
 
 Note on ZINC check: `wiki.docking.org` dropped TLS connections from the test host on `2026-11-18`; its terms (`fetch_only`, no major-portion redistribution without written permission) were verified from prior documentation and search results. This is machine-visible on the `Source` record via `license_check_method = "indirect"` and `notes` starting with `LICENSE CHECK INDIRECT`.
 
@@ -200,6 +208,14 @@ Full candidate-by-candidate table is saved in [`examples/demo_output.md`](exampl
   python scripts/fetch_aizynth.py --with-stock
   buy-or-make rank candidates.smi --route-backend aizynthfinder
   ```
+- **2024–2026 Open Corpora (`PaRoutes`, `ChEMBL 37`, `SureChEMBL`, `COCONUT 2.0`, `ORDerly`, `Syntheseus USPTO-50K`, `SynPlanner`)**:
+  ```bash
+  python scripts/fetch_open_datasets_2026.py --list
+  python scripts/fetch_open_datasets_2026.py --artifact paroutes_stock_n1
+  python scripts/fetch_open_datasets_2026.py --artifact syntheseus_uspto_50k --max-rows 50000
+  python scripts/fetch_open_datasets_2026.py --artifact chembl_37_chemreps --max-rows 100000
+  ```
+  Stopping-stock artifacts import into `data/stock.sqlite`, reaction/route benchmarks index into `data/reactions.sqlite`, and non-vendor reference corpora (`ChEMBL`, `SureChEMBL`, `COCONUT 2.0`) import into `data/reference_compounds.sqlite` (pass `--stock data/reference_compounds.sqlite` only when deliberately matching against reference compounds).
 - **ZINC / eMolecules / Mcule / Enamine**: see [`scripts/fetch_zinc.py`](scripts/fetch_zinc.py), [`scripts/fetch_emolecules.py`](scripts/fetch_emolecules.py), [`scripts/fetch_mcule.py`](scripts/fetch_mcule.py), and [`scripts/fetch_enamine.py`](scripts/fetch_enamine.py).
 
 ## Caveats and limitations
