@@ -225,4 +225,89 @@ def test_cwd_independence_leaves_zero_artifacts(
     out = autolab_wire.process_packet({"require_priced_within_budget": True})
     assert out["halted"] is False
     assert out["procurement"]["listed_price_usd_per_g"] == pytest.approx(0.42)
+    assert out["procurement"]["data_source"] == "synthetic_reference_catalog"
+    assert out["procurement"]["catalog_origin"] == "synthetic_demo"
     assert list(tmp_path.iterdir()) == []
+
+
+def test_fail_closed_validation_on_malformed_inputs_and_explicit_data_source(
+    tmp_path: Path,
+) -> None:
+    # 1. Non-dict packet fails closed without raising TypeError
+    non_dict = autolab_wire.process_packet("not-a-dict")  # type: ignore[arg-type]
+    assert non_dict["halted"] is True
+    assert non_dict["halt_reason"] == "L5_PROCUREMENT_INVALID_INPUT"
+    assert non_dict["procurement"]["within_budget"] is False
+
+    # 2. Explicit null/empty/non-string/invalid SMILES must NEVER substitute aspirin ($0.42/g)
+    for bad_smi in (None, "", "   ", True, 123, ["CCO"], "not_a_valid_smiles"):
+        res = autolab_wire.process_packet({"candidate_smiles": bad_smi})
+        assert res["halted"] is True, f"Expected fail-closed halt on candidate_smiles={bad_smi!r}"
+        assert res["halt_reason"] == "L5_PROCUREMENT_INVALID_INPUT"
+        assert res["procurement"]["status"] == "invalid"
+        assert res["procurement"]["within_budget"] is False
+
+    # 3. Malformed budget_usd_per_g (NaN, Inf, negative, bool, None, str) fails closed
+    for bad_budget in (float("nan"), float("inf"), float("-inf"), -1.0, True, False, None, "25.0"):
+        res = autolab_wire.process_packet(
+            {"candidate_smiles": "CC(=O)Oc1ccccc1C(=O)O", "budget_usd_per_g": bad_budget}
+        )
+        assert res["halted"] is True, f"Expected fail-closed halt on budget={bad_budget!r}"
+        assert res["halt_reason"] == "L5_PROCUREMENT_INVALID_INPUT"
+        assert res["procurement"]["within_budget"] is False
+
+    # 4. Malformed max_steps, require_priced_within_budget ("false" string!), step_yield, price hint
+    bad_packets = [
+        {"max_steps": -1},
+        {"max_steps": 99},
+        {"max_steps": True},
+        {"max_steps": 1.5},
+        {"require_priced_within_budget": "false"},
+        {"require_priced_within_budget": 0},
+        {"planner": "unknown_planner"},
+        {"step_yield": 0.0},
+        {"step_yield": 1.5},
+        {"step_yield": float("nan")},
+        {"target_scale_g": -2.0},
+        {"listed_price_usd_per_g": -0.5},
+        {"listed_price_usd_per_g": float("nan")},
+        {"listed_price_usd_per_g": True},
+        {"halted": "false"},
+        {"trace": "not-a-list"},
+    ]
+    for pkt in bad_packets:
+        res = autolab_wire.process_packet(pkt)
+        assert res["halted"] is True, f"Expected fail-closed halt on {pkt!r}"
+        assert res["halt_reason"] == "L5_PROCUREMENT_INVALID_INPUT"
+
+    # 5. Retro* planner over built-in reference stock vs explicit local vendor catalog provenance
+    rs_pkt = autolab_wire.process_packet(
+        {
+            "candidate_smiles": "COc1ccc(C(=O)Nc2ccc(-c3ccccn3)cc2)cc1",
+            "planner": "retro_star",
+            "max_steps": 4,
+            "require_priced_within_budget": True,
+        }
+    )
+    assert rs_pkt["halted"] is False
+    assert rs_pkt["procurement"]["status"] == "makeable"
+    assert rs_pkt["procurement"]["planner"] == "retro_star"
+    assert rs_pkt["procurement"]["data_source"] == "synthetic_reference_catalog"
+    assert rs_pkt["procurement"]["catalog_origin"] == "synthetic_demo"
+
+    real_stock = tmp_path / "vendor.tsv"
+    real_stock.write_text(
+        "smiles\tvendor\tcatalog_id\tpack_value\tpack_unit\tprice\tcurrency\tsource_id\tsource_url\tlicense\n"
+        "CC(=O)Oc1ccccc1C(=O)O\tSigmaExample\tSIG-1\t5.0\tg\t12.5\tUSD\tlocal_stock\thttps://vendor.example/1\tCC0-1.0\n",
+        encoding="utf-8",
+    )
+    vendor_pkt = autolab_wire.process_packet(
+        {
+            "candidate_smiles": "CC(=O)Oc1ccccc1C(=O)O",
+            "stock_paths": [str(real_stock)],
+            "require_priced_within_budget": True,
+        }
+    )
+    assert vendor_pkt["halted"] is False
+    assert vendor_pkt["procurement"]["data_source"] == "local_vendor_catalog"
+    assert vendor_pkt["procurement"]["catalog_origin"] == "real"

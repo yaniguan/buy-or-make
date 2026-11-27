@@ -261,6 +261,18 @@
     "target_inchikey": {
       "title": "Target Inchikey",
       "type": "string"
+    },
+    "tree_depth": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Tree Depth"
     }
   },
   "required": [

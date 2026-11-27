@@ -221,6 +221,7 @@ class RouteStep(_Model):
 class Route(_Model):
     target_inchikey: str
     n_steps: int
+    tree_depth: Optional[int] = None
     steps: list[RouteStep]
     leaves: list[str]
     leaves_purchasable: list[bool]
@@ -237,6 +238,8 @@ class Route(_Model):
     def _validate_route(self) -> "Route":
         if self.n_steps < 0:
             raise ValueError("Route.n_steps must be >= 0")
+        if self.tree_depth is not None and (isinstance(self.tree_depth, bool) or self.tree_depth < 0):
+            raise ValueError("Route.tree_depth must be >= 0 when provided")
         if len(self.leaves) != len(self.leaves_purchasable):
             raise ValueError("Route.leaves and Route.leaves_purchasable must have equal length")
         if self.score is not None and not math.isfinite(self.score):
@@ -304,6 +307,14 @@ class AssayfoldRecord(_Model):
 
 
 InChIKeyMatchLiteral = Literal["exact", "salt_equivalent", "stereoisomer_relaxed", "none"]
+DataSourceLiteral = Literal[
+    "live_vendor_registry",
+    "local_vendor_catalog",
+    "open_stopping_stock",
+    "synthetic_reference_catalog",
+    "unmatched",
+    "unknown",
+]
 
 
 class AvailabilityRecord(_Model):
@@ -318,6 +329,7 @@ class AvailabilityRecord(_Model):
     matched_offer_inchikeys: list[str] = Field(default_factory=list)
     stereoisomer_offers: list[Offer] = Field(default_factory=list)
     sa_scores: SAScores = Field(default_factory=SAScores)
+    data_source: DataSourceLiteral = "unknown"
     origin: OriginLiteral = "real"
     provenance: Provenance = Field(default_factory=Provenance)
     licenses: list[str] = Field(default_factory=list)
@@ -403,6 +415,8 @@ class AvailabilityRecord(_Model):
         governing_license = select_record_license(all_licenses, default="MIT")
 
         tags = [status_tag]
+        if self.data_source != "unknown":
+            tags.append(f"data_source:{self.data_source}")
         if self.inchikey_match != "none":
             tags.append(f"inchikey_match:{self.inchikey_match}")
         for lic in sorted(all_licenses):
@@ -448,6 +462,7 @@ class RankResult(_Model):
     inchikey_match: InChIKeyMatchLiteral = "none"
     matched_offer_inchikeys: list[str] = Field(default_factory=list)
     stereoisomer_inchikeys_in_stock: list[str] = Field(default_factory=list)
+    data_source: DataSourceLiteral = "unknown"
     sa_scores: Optional[SAScores] = None
     reasons: list[str] = Field(default_factory=list)
     evidence: list[str] = Field(default_factory=list)

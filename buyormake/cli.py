@@ -10,6 +10,7 @@ from typing import Optional
 
 from .cache import DEFAULT_CACHE_PATH
 from .rank import evaluate_candidates, filter_decisions_from_ranked
+from .routes import DEFAULT_REACTION_DB
 from .schema import AvailabilityRecord, export_json_schema
 from .sources import SOURCES
 
@@ -60,8 +61,20 @@ def _add_eval_arguments(p: argparse.ArgumentParser) -> None:
     p.add_argument(
         "--route-backend",
         default="auto",
-        choices=["auto", "template", "lookup", "aizynthfinder"],
+        choices=["auto", "template", "lookup", "aizynthfinder", "retro_star"],
         help="Retrosynthesis backend (default: auto).",
+    )
+    p.add_argument(
+        "--planner",
+        default="lookup_smarts",
+        choices=["lookup_smarts", "retro_star"],
+        help="Retrosynthesis search planner: lookup_smarts (default) or retro_star (best-first AND-OR).",
+    )
+    p.add_argument(
+        "--reaction-db",
+        type=Path,
+        default=DEFAULT_REACTION_DB,
+        help="Path to SQLite indexed reaction database (default: data/reactions.sqlite).",
     )
     p.add_argument("--offline", action="store_true", help="Use local cache/files only (no HTTP).")
     p.add_argument(
@@ -177,11 +190,13 @@ def main(argv: Optional[list[str]] = None) -> int:
             max_steps=args.max_steps,
             backends=backends,
             route_backend=args.route_backend,
+            planner=args.planner,
             offline=args.offline,
             cache_path=args.cache_path,
             cache_max_age_seconds=ttl_sec,
             refresh_cache=args.refresh_cache,
             stock_paths=args.stock,
+            reaction_db_path=args.reaction_db,
             stereo_relaxed=args.stereo_relaxed,
             default_step_yield=args.step_yield,
             currency=args.budget_currency,

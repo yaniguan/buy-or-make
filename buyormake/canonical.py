@@ -201,6 +201,11 @@ def normalize_smiles(smiles: str, *, desalt: bool = False) -> Optional[Normalize
             if parent is not None and parent.GetNumAtoms() > 0:
                 uncharged = _UNCHARGER.uncharge(parent)
                 cand = uncharged if uncharged is not None else parent
+                try:
+                    Chem.SanitizeMol(cand)
+                except Exception:
+                    cand = parent
+                    Chem.SanitizeMol(cand)
                 cand_charge = Chem.GetFormalCharge(cand)
                 if cand_charge == 0:
                     mol = cand
@@ -220,6 +225,7 @@ def normalize_smiles(smiles: str, *, desalt: bool = False) -> Optional[Normalize
                             combined = charged_frags[0]
                             for extra in charged_frags[1:]:
                                 combined = Chem.CombineMols(combined, extra)
+                            Chem.SanitizeMol(combined)
                             mol = combined
         except Exception:
             pass
@@ -229,17 +235,24 @@ def normalize_smiles(smiles: str, *, desalt: bool = False) -> Optional[Normalize
             if parent is not None and parent.GetNumAtoms() > 0:
                 uncharged = _UNCHARGER.uncharge(parent)
                 cand = uncharged if uncharged is not None else parent
+                try:
+                    Chem.SanitizeMol(cand)
+                except Exception:
+                    cand = parent
                 has_perm_charge = Chem.GetFormalCharge(cand) != 0
         except Exception:
             pass
 
-    can = Chem.MolToSmiles(mol, isomericSmiles=True, canonical=True)
-    inchikey = Chem.MolToInchiKey(mol)
-    if not inchikey:
+    try:
+        can = Chem.MolToSmiles(mol, isomericSmiles=True, canonical=True)
+        inchikey = Chem.MolToInchiKey(mol)
+        if not inchikey:
+            return None
+        formula = rdMolDescriptors.CalcMolFormula(mol)
+        mw = float(Descriptors.MolWt(mol))
+        n_heavy = int(mol.GetNumHeavyAtoms())
+    except Exception:
         return None
-    formula = rdMolDescriptors.CalcMolFormula(mol)
-    mw = float(Descriptors.MolWt(mol))
-    n_heavy = int(mol.GetNumHeavyAtoms())
     return NormalizedMol(
         canonical_smiles=can,
         inchikey=inchikey,

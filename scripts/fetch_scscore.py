@@ -4,9 +4,14 @@
 from __future__ import annotations
 
 import argparse
+import sys
 from pathlib import Path
 
-from buyormake.canonical import atomic_download
+try:
+    from buyormake.canonical import atomic_download
+except ModuleNotFoundError:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+    from buyormake.canonical import atomic_download
 
 URL = (
     "https://raw.githubusercontent.com/connorcoley/scscore/master/"

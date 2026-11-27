@@ -202,6 +202,19 @@
       "title": "Cost Complete",
       "type": "boolean"
     },
+    "data_source": {
+      "default": "unknown",
+      "enum": [
+        "live_vendor_registry",
+        "local_vendor_catalog",
+        "open_stopping_stock",
+        "synthetic_reference_catalog",
+        "unmatched",
+        "unknown"
+      ],
+      "title": "Data Source",
+      "type": "string"
+    },
     "est_cost": {
       "anyOf": [
         {

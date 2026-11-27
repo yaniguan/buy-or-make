@@ -280,7 +280,152 @@ theorem paretoDominates_irrefl (a : GreenTriplet) :
   apply decide_eq_false
   omega
 
-/-! ## 3. Compile-Time `#guard` Witnesses -/
+/-! ## 3. Discrete Pack-Size MOQ Outlay, Shared-Synthon Pooling & Step-Depth Yield Bounds -/
+
+/-- Minimum integer pack count of size `packUg` (> 0, in micrograms) covering `reqUg` (> 0). -/
+def discretePackCount (reqUg packUg : Nat) : Nat :=
+  if packUg == 0 || reqUg == 0 then 0
+  else (reqUg + packUg - 1) / packUg
+
+/-- Discrete pack cash outlay in cents for single-SKU offer `(packUg, priceCents)`. -/
+def discretePackOutlayCents (reqUg packUg priceCents : Nat) : Nat :=
+  discretePackCount reqUg packUg * priceCents
+
+/-- Minimum cash outlay in cents across a non-empty list of `(packUg, priceCents)` vendor SKUs. -/
+def minSkuOutlayCents (reqUg : Nat) : List (Nat × Nat) → Option Nat
+  | [] => none
+  | (packUg, priceCents) :: rest =>
+    if packUg == 0 then minSkuOutlayCents reqUg rest
+    else
+      let cur := discretePackOutlayCents reqUg packUg priceCents
+      match minSkuOutlayCents reqUg rest with
+      | none => some cur
+      | some best => some (min cur best)
+
+/-- Helper lemma: unfold `discretePackCount` on positive mass and positive pack size. -/
+theorem discretePackCount_pos (reqUg packUg : Nat) (hreq : 0 < reqUg) (hpack : 0 < packUg) :
+    discretePackCount reqUg packUg = (reqUg + packUg - 1) / packUg := by
+  have hp0 : (packUg == 0) = false := beq_false_of_ne (Nat.ne_of_gt hpack)
+  have hr0 : (reqUg == 0) = false := beq_false_of_ne (Nat.ne_of_gt hreq)
+  simp [discretePackCount, hp0, hr0]
+
+/-- Helper lemma: ceiling division `(r + p - 1) / p` is bounded above by `k` whenever `r ≤ k * p`. -/
+theorem ceil_div_le_of_le_mul (r p k : Nat) (hp : 0 < p) (hle : r ≤ k * p) :
+    (r + p - 1) / p ≤ k := by
+  apply Nat.le_of_not_lt
+  intro hgt
+  have hdiv := Nat.div_add_mod (r + p - 1) p
+  have hmod := Nat.mod_lt (r + p - 1) hp
+  have hk1 : k + 1 ≤ (r + p - 1) / p := hgt
+  have hmul : (k + 1) * p ≤ ((r + p - 1) / p) * p := Nat.mul_le_mul_right p hk1
+  have hcomm : p * ((r + p - 1) / p) = ((r + p - 1) / p) * p := Nat.mul_comm _ _
+  have hexpand : (k + 1) * p = k * p + p := Nat.succ_mul k p
+  omega
+
+/-- Hard boundary theorem 8: Discrete pack count always covers the required reagent mass. -/
+theorem discrete_pack_covers_required_mass (reqUg packUg : Nat)
+    (hreq : 0 < reqUg) (hpack : 0 < packUg) :
+    reqUg ≤ discretePackCount reqUg packUg * packUg := by
+  rw [discretePackCount_pos reqUg packUg hreq hpack]
+  have hdiv := Nat.div_add_mod (reqUg + packUg - 1) packUg
+  have hmod := Nat.mod_lt (reqUg + packUg - 1) hpack
+  have hcomm : packUg * ((reqUg + packUg - 1) / packUg) =
+               ((reqUg + packUg - 1) / packUg) * packUg := Nat.mul_comm _ _
+  omega
+
+/-- Hard boundary theorem 9: Pooling a shared building block across two branches of a convergent
+    `Retro*` route is subadditive (never requires more packs than independent per-branch orders). -/
+theorem shared_synthon_pack_count_subadditive (reqA reqB packUg : Nat)
+    (ha : 0 < reqA) (hb : 0 < reqB) (hp : 0 < packUg) :
+    discretePackCount (reqA + reqB) packUg ≤
+      discretePackCount reqA packUg + discretePackCount reqB packUg := by
+  have covA := discrete_pack_covers_required_mass reqA packUg ha hp
+  have covB := discrete_pack_covers_required_mass reqB packUg hb hp
+  have hsum : reqA + reqB ≤ (discretePackCount reqA packUg + discretePackCount reqB packUg) * packUg := by
+    rw [Nat.add_mul]
+    omega
+  have hab : 0 < reqA + reqB := by omega
+  rw [discretePackCount_pos (reqA + reqB) packUg hab hp]
+  exact ceil_div_le_of_le_mul (reqA + reqB) packUg
+    (discretePackCount reqA packUg + discretePackCount reqB packUg) hp hsum
+
+/-- Hard boundary theorem 10: Shared-synthon MOQ cash outlay across multi-branch `Retro*` trees
+    is bounded above by the sum of independent branch outlays. -/
+theorem shared_synthon_outlay_subadditive (reqA reqB packUg priceCents : Nat)
+    (ha : 0 < reqA) (hb : 0 < reqB) (hp : 0 < packUg) :
+    discretePackOutlayCents (reqA + reqB) packUg priceCents ≤
+      discretePackOutlayCents reqA packUg priceCents +
+      discretePackOutlayCents reqB packUg priceCents := by
+  unfold discretePackOutlayCents
+  rw [← Nat.add_mul]
+  exact Nat.mul_le_mul_right priceCents
+    (shared_synthon_pack_count_subadditive reqA reqB packUg ha hb hp)
+
+/-- Fixed-point step-depth yield mass compounding (`yieldPermille ∈ (0, 1000]`). -/
+def compoundYieldMassUg (baseMassUg yieldPermille : Nat) : Nat → Nat
+  | 0 => baseMassUg
+  | d + 1 =>
+    let prev := compoundYieldMassUg baseMassUg yieldPermille d
+    if yieldPermille == 0 then 0
+    else (prev * 1000 + yieldPermille - 1) / yieldPermille
+
+theorem single_step_yield_ge_self (m y : Nat) (hy0 : 0 < y) (hy1 : y ≤ 1000) :
+    m ≤ (m * 1000 + y - 1) / y := by
+  apply Nat.le_of_not_lt
+  intro hlt
+  have hdiv := Nat.div_add_mod (m * 1000 + y - 1) y
+  have hmod := Nat.mod_lt (m * 1000 + y - 1) hy0
+  have hle : (m * 1000 + y - 1) / y + 1 ≤ m := by omega
+  have hmul : ((m * 1000 + y - 1) / y + 1) * y ≤ m * y := Nat.mul_le_mul_right y hle
+  have hmy : m * y ≤ m * 1000 := Nat.mul_le_mul_left m hy1
+  have hcomm : y * ((m * 1000 + y - 1) / y) = ((m * 1000 + y - 1) / y) * y := Nat.mul_comm _ _
+  have hexp : ((m * 1000 + y - 1) / y + 1) * y = ((m * 1000 + y - 1) / y) * y + y :=
+    Nat.succ_mul _ y
+  omega
+
+/-- Hard boundary theorem 11: Yield-compounded mass at any depth `d` is ≥ the 100%-yield lower bound. -/
+theorem yield_compounded_ge_lower_bound (baseMassUg yieldPermille d : Nat)
+    (hy0 : 0 < yieldPermille) (hy1 : yieldPermille ≤ 1000) :
+    baseMassUg ≤ compoundYieldMassUg baseMassUg yieldPermille d := by
+  induction d with
+  | zero => simp [compoundYieldMassUg]
+  | succ k ih =>
+    have hyb : (yieldPermille == 0) = false := beq_false_of_ne (Nat.ne_of_gt hy0)
+    simp only [compoundYieldMassUg, hyb, Bool.false_eq_true, ↓reduceIte]
+    exact Nat.le_trans ih (single_step_yield_ge_self _ yieldPermille hy0 hy1)
+
+/-- Hard boundary theorem 12: Deeper linear synthesis steps require ≥ reagent mass than shallower
+    convergent branches for any step yield `yieldPermille ∈ (0, 1000]`. -/
+theorem yield_compounded_monotone_depth (baseMassUg yieldPermille d1 d2 : Nat)
+    (hy0 : 0 < yieldPermille) (hy1 : yieldPermille ≤ 1000) (hd : d1 ≤ d2) :
+    compoundYieldMassUg baseMassUg yieldPermille d1 ≤
+      compoundYieldMassUg baseMassUg yieldPermille d2 := by
+  induction hd with
+  | refl => exact Nat.le_refl _
+  | @step m _ ih =>
+    have hyb : (yieldPermille == 0) = false := beq_false_of_ne (Nat.ne_of_gt hy0)
+    simp only [compoundYieldMassUg, hyb, Bool.false_eq_true, ↓reduceIte]
+    exact Nat.le_trans ih (single_step_yield_ge_self _ yieldPermille hy0 hy1)
+
+/-- Discrete MOQ cash-outlay budget gate mirroring `filter_decisions_from_ranked`. -/
+def moqOutlayPolicyOK (outlayCents maxOutlayCents : Option Nat) (requireComplete : Bool) : Bool :=
+  match maxOutlayCents with
+  | none => true
+  | some M =>
+    match outlayCents with
+    | none => !requireComplete
+    | some c => decide (c ≤ M)
+
+/-- Hard boundary theorem 13: Over-budget or missing MOQ cash outlay fails strict outlay gating. -/
+theorem moq_outlay_gate_sound (outlayCents : Option Nat) (M : Nat)
+    (hfail : (outlayCents = none) ∨ (∃ c, outlayCents = some c ∧ M < c)) :
+    moqOutlayPolicyOK outlayCents (some M) true = false := by
+  rcases hfail with hnone | ⟨c, hsome, hgt⟩
+  · simp [moqOutlayPolicyOK, hnone]
+  · simp [moqOutlayPolicyOK, hsome]
+    omega
+
+/-! ## 4. Compile-Time `#guard` Witnesses -/
 
 def demoValidRoute : MakeOrBuyProposal :=
   { isDirectBuy := false
@@ -343,5 +488,23 @@ def bogusTranshalogenSuzuki : MakeOrBuyProposal :=
          { costCentsPerGram := 1800, leadTimeDays := 3, pmiPermille := 14000 }
          { costCentsPerGram := 1800, leadTimeDays := 9, pmiPermille := 65000 }
        == true
+
+-- Shared-synthon MOQ pooling: 600 mg + 300 mg = 900 mg needs 1x 1 g pack ($45.00 = 4500c),
+-- whereas separate per-branch orders buy 2x 1 g packs ($90.00 = 9000c)
+#guard discretePackOutlayCents (600000 + 300000) 1000000 4500 == 4500
+#guard discretePackOutlayCents 600000 1000000 4500 +
+       discretePackOutlayCents 300000 1000000 4500 == 9000
+
+-- Bench-scale 620 mg benzoic acid: $45 / 1 g vial (4500c) beats $500 / 1 kg drum (50000c) on outlay
+#guard minSkuOutlayCents 620000 [(1000000000, 50000), (1000000, 4500)] == some 4500
+
+-- Step-depth yield compounding (70% yield = 700 permille): depth 3 linear > depth 2 convergent > depth 0
+#guard compoundYieldMassUg 800000 700 3 > compoundYieldMassUg 800000 700 2
+#guard compoundYieldMassUg 800000 700 2 > 800000
+
+-- Strict MOQ outlay gate blocks null and over-budget outlays
+#guard moqOutlayPolicyOK none (some 1000) true == false
+#guard moqOutlayPolicyOK (some 4600) (some 1000) true == false
+#guard moqOutlayPolicyOK (some 4600) (some 5000) true == true
 
 end BuyOrMakeLean

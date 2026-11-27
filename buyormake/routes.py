@@ -841,6 +841,7 @@ def find_routes(
     *,
     max_steps: int = 3,
     route_backend: str = "auto",
+    planner: str = "lookup_smarts",
     offer_lookup: OfferLookupFn,
     lookup_backend: Optional[ReactionLookupBackend] = None,
     template_backend: Optional[TemplateFallbackBackend] = None,
@@ -854,12 +855,44 @@ def find_routes(
     target_scale_g: float = 1.0,
     max_pack_multiple: Optional[float] = None,
     offer_mol_weights: Optional[Mapping[str, float]] = None,
+    scscore_weights: Optional[Path | str] = None,
+    retro_star_max_expansions: int = 90,
 ) -> list[Route]:
-    """Search for retrosynthetic routes up to max_steps using the selected backend."""
+    """Search for retrosynthetic routes up to max_steps using the selected backend and planner."""
     if max_steps <= 0:
         return []
+    if planner not in {"lookup_smarts", "retro_star"}:
+        raise ValueError(f"Unsupported planner {planner!r}; expected 'lookup_smarts' or 'retro_star'")
 
     cache = offer_cache if offer_cache is not None else {}
+
+    if planner == "retro_star" or route_backend == "retro_star":
+        from .retro_star import RetroStarPlanner
+        from .scores import DEFAULT_SCSCORE_WEIGHTS
+
+        rs_planner = RetroStarPlanner(
+            max_expansions=retro_star_max_expansions,
+            scscore_weights=scscore_weights if scscore_weights is not None else DEFAULT_SCSCORE_WEIGHTS,
+        )
+        return rs_planner.search(
+            target_smiles,
+            target_inchikey,
+            max_steps=max_steps,
+            route_backend=route_backend,
+            offer_lookup=offer_lookup,
+            lookup_backend=lookup_backend,
+            template_backend=template_backend,
+            offer_cache=cache,
+            target_mol=target_mol,
+            currency=currency,
+            desalt_fallback=desalt_fallback,
+            default_step_yield=default_step_yield,
+            stoich_excess=stoich_excess,
+            target_scale_g=target_scale_g,
+            max_pack_multiple=max_pack_multiple,
+            offer_mol_weights=offer_mol_weights,
+        )
+
     routes: list[Route] = []
 
     if route_backend in {"auto", "aizynthfinder"} and aizynth_backend and aizynth_backend.is_ready():

@@ -435,6 +435,18 @@
         "target_inchikey": {
           "title": "Target Inchikey",
           "type": "string"
+        },
+        "tree_depth": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Tree Depth"
         }
       },
       "required": [
@@ -643,6 +655,19 @@
   },
   "additionalProperties": false,
   "properties": {
+    "data_source": {
+      "default": "unknown",
+      "enum": [
+        "live_vendor_registry",
+        "local_vendor_catalog",
+        "open_stopping_stock",
+        "synthetic_reference_catalog",
+        "unmatched",
+        "unknown"
+      ],
+      "title": "Data Source",
+      "type": "string"
+    },
     "inchikey_match": {
       "default": "none",
       "enum": [

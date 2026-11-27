@@ -26,10 +26,12 @@ from .routes import (
 )
 from .schema import (
     AvailabilityRecord,
+    DataSourceLiteral,
     FilterSummary,
     InChIKeyMatchLiteral,
     Molecule,
     Offer,
+    OriginLiteral,
     PriceStatusLiteral,
     ProposalDecision,
     Provenance,
@@ -141,6 +143,49 @@ def _collect_provenance_and_licenses(
     return sorted(used_set), sorted(lic_set)
 
 
+_STOPPING_STOCK_SOURCE_IDS: frozenset[str] = frozenset(
+    {"paroutes", "syntheseus_uspto_50k", "synplanner_data", "aizynthfinder_zinc_stock"}
+)
+
+
+def _classify_data_source_and_origin(
+    offers: list[Offer],
+    routes: list[Route],
+    leaf_offer_cache: dict[str, list[Offer]],
+    status: str,
+) -> tuple[DataSourceLiteral, OriginLiteral]:
+    """Classify provenance so synthetic/demo reference stock is never confused with vendor catalogs."""
+    active_offers: list[Offer] = []
+    if status == "buyable":
+        active_offers = list(offers)
+    elif status == "makeable":
+        solved = [r for r in routes if r.leaves and all(r.leaves_purchasable)]
+        if solved:
+            for leaf_smi in solved[0].leaves:
+                lnm = normalize_smiles(leaf_smi)
+                if lnm is not None:
+                    active_offers.extend(leaf_offer_cache.get(lnm.inchikey, []))
+
+    if not active_offers:
+        return "unmatched", "real"
+
+    if any(
+        off.vendor in {"autolab_ref_catalog", "synthetic_demo"}
+        or off.source_id == "synthetic_demo"
+        or "autolab.local/" in (off.source_url or "")
+        for off in active_offers
+    ):
+        return "synthetic_reference_catalog", "synthetic_demo"
+
+    if any(off.source_id == "pubchem_pug" for off in active_offers):
+        return "live_vendor_registry", "real"
+
+    if all(off.source_id in _STOPPING_STOCK_SOURCE_IDS for off in active_offers):
+        return "open_stopping_stock", "real"
+
+    return "local_vendor_catalog", "real"
+
+
 @dataclass
 class _EvaluatedEntry:
     canonical_smiles: str
@@ -162,6 +207,8 @@ class _EvaluatedEntry:
     stereoisomer_inchikeys_in_stock: list[str]
     stereoisomer_offers: list[Offer]
     leaf_offers: dict[str, list[Offer]]
+    data_source: DataSourceLiteral
+    origin: OriginLiteral
     sa_scores: SAScores
     offers: list[Offer]
     routes: list[Route]
@@ -178,6 +225,7 @@ def evaluate_candidates(
     max_steps: int = 3,
     backends: tuple[str, ...] = ("local_stock", "pubchem"),
     route_backend: str = "auto",
+    planner: str = "lookup_smarts",
     offline: bool = False,
     cache_path: Path | str = DEFAULT_CACHE_PATH,
     cache_max_age_seconds: Optional[float] = None,
@@ -194,6 +242,9 @@ def evaluate_candidates(
     target_scale_g: float = 1.0,
     max_pack_multiple: Optional[float] = None,
     currency: str = "USD",
+    data_source_override: Optional[DataSourceLiteral] = None,
+    origin_override: Optional[OriginLiteral] = None,
+    retro_star_max_expansions: int = 90,
     http_client: Optional[httpx.Client] = None,
 ) -> tuple[list[RankResult], list[AvailabilityRecord]]:
     """Evaluate candidates and return `(sorted RankResults, AvailabilityRecords in input order)`."""
@@ -302,6 +353,7 @@ def evaluate_candidates(
                         est_cost=None,
                         step_yield_assumed=default_step_yield,
                         cost_complete=False,
+                        data_source=data_source_override or "unmatched",
                         sa_scores=None,
                         reasons=["invalid SMILES; RDKit could not parse structure"],
                         evidence=[],
@@ -464,6 +516,7 @@ def evaluate_candidates(
                         route_target.inchikey,
                         max_steps=max_steps,
                         route_backend=route_backend,
+                        planner=planner,
                         offer_lookup=lookup_leaf_offers,
                         lookup_backend=lookup_backend,
                         template_backend=template_backend,
@@ -477,6 +530,8 @@ def evaluate_candidates(
                         target_scale_g=target_scale_g,
                         max_pack_multiple=max_pack_multiple,
                         offer_mol_weights=offer_mol_weights,
+                        scscore_weights=scscore_weights,
+                        retro_star_max_expansions=retro_star_max_expansions,
                     )
                     for r_item in routes:
                         for leaf_smi in r_item.leaves:
@@ -577,6 +632,11 @@ def evaluate_candidates(
                 used_sources, lics = _collect_provenance_and_licenses(
                     offers, routes, sa_scores, leaf_offer_cache
                 )
+                inferred_ds, inferred_origin = _classify_data_source_and_origin(
+                    offers, routes, leaf_offer_cache, status
+                )
+                eff_ds = data_source_override if data_source_override is not None else inferred_ds
+                eff_origin = origin_override if origin_override is not None else inferred_origin
                 entry = _EvaluatedEntry(
                     canonical_smiles=nm.canonical_smiles,
                     inchikey=nm.inchikey,
@@ -597,6 +657,8 @@ def evaluate_candidates(
                     stereoisomer_inchikeys_in_stock=stereo_iks,
                     stereoisomer_offers=list(stereo_offers),
                     leaf_offers=rec_leaf_offers,
+                    data_source=eff_ds,
+                    origin=eff_origin,
                     sa_scores=sa_scores,
                     offers=offers,
                     routes=routes,
@@ -625,7 +687,8 @@ def evaluate_candidates(
                 matched_offer_inchikeys=list(entry.matched_offer_inchikeys),
                 stereoisomer_offers=list(entry.stereoisomer_offers),
                 sa_scores=entry.sa_scores,
-                origin="real",
+                data_source=entry.data_source,
+                origin=entry.origin,
                 provenance=Provenance(
                     source_url=entry.evidence[0] if entry.evidence else None,
                     software=[SoftwareRef(name="buy-or-make", version="0.1.0")],
@@ -655,6 +718,7 @@ def evaluate_candidates(
                     inchikey_match=entry.inchikey_match,
                     matched_offer_inchikeys=list(entry.matched_offer_inchikeys),
                     stereoisomer_inchikeys_in_stock=list(entry.stereoisomer_inchikeys_in_stock),
+                    data_source=entry.data_source,
                     sa_scores=entry.sa_scores,
                     reasons=list(entry.reasons),
                     evidence=list(entry.evidence),

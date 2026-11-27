@@ -1,0 +1,823 @@
+{
+  "benchmark_schema": "buy-or-make/retrosynthesis-benchmark/v1",
+  "data_source": "open_stopping_stock",
+  "datasets": {
+    "paroutes_routes_n1": {
+      "artifact_key": "paroutes_routes_n1",
+      "filename": "ref_routes_n1.json",
+      "sha256": "b818f2115ce10da51f84bf13f19dc2206863b1b074ef348017de258e9e1bff02",
+      "size_bytes": 64187987,
+      "source_id": "paroutes",
+      "spdx_license": "CC-BY-4.0",
+      "url": "https://zenodo.org/api/records/7341155/files/ref_routes_n1.json/content"
+    },
+    "paroutes_routes_n5": {
+      "artifact_key": "paroutes_routes_n5",
+      "filename": "ref_routes_n5.json",
+      "sha256": "d878bec737d34a861b859912ac783f065c380f704f6d0087af4ea8ef667fa2bf",
+      "size_bytes": 82120928,
+      "source_id": "paroutes",
+      "spdx_license": "CC-BY-4.0",
+      "url": "https://zenodo.org/api/records/7341155/files/ref_routes_n5.json/content"
+    },
+    "paroutes_stock_n1": {
+      "artifact_key": "paroutes_stock_n1",
+      "filename": "stock_n1.txt",
+      "sha256": "b8641e2028846d995953b30f7acd36e7521d0301159518d172497340a0bfb115",
+      "size_bytes": 368802,
+      "source_id": "paroutes",
+      "spdx_license": "CC-BY-4.0",
+      "url": "https://zenodo.org/api/records/7341155/files/stock_n1.txt/content"
+    },
+    "paroutes_stock_n5": {
+      "artifact_key": "paroutes_stock_n5",
+      "filename": "stock_n5.txt",
+      "sha256": "199ec2d9fad0638c3ae53f2ea091dcd6bf9207a938b12ae1aa9429c37dd097af",
+      "size_bytes": 360970,
+      "source_id": "paroutes",
+      "spdx_license": "CC-BY-4.0",
+      "url": "https://zenodo.org/api/records/7341155/files/stock_n5.txt/content"
+    },
+    "scscore_weights": {
+      "artifact_key": "scscore_weights",
+      "filename": "model.ckpt-10654.as_numpy.json.gz",
+      "sha256": "fa90bd552307b2efd05eb1e53033bc9eadadfd5bdca682e541040982af99536b",
+      "size_bytes": 6178760,
+      "source_id": "scscore",
+      "spdx_license": "MIT",
+      "url": "https://raw.githubusercontent.com/connorcoley/scscore/master/models/full_reaxys_model_1024bool/model.ckpt-10654.as_numpy.json.gz"
+    },
+    "synplanner_building_blocks": {
+      "artifact_key": "synplanner_building_blocks",
+      "filename": "building_blocks_em_sa_ln.smi",
+      "sha256": "53b6d5eec7b3c522e8499213b95f5884028ce73fd83e09e1e63b6ded97e5affb",
+      "size_bytes": 5784208,
+      "source_id": "synplanner_data",
+      "spdx_license": "MIT",
+      "url": "https://huggingface.co/Laboratoire-De-Chemoinformatique/SynPlanner/resolve/main/building_blocks/building_blocks_em_sa_ln.smi"
+    },
+    "synplanner_targets_sa_1_5_2_5": {
+      "artifact_key": "synplanner_targets_sa_1_5_2_5",
+      "filename": "targets_with_sascore_1.5_2.5.smi",
+      "sha256": "b3e7263bd803a2dbe694d0a8a8d7562971ab9fc6a1994d306104eec5fe7eca28",
+      "size_bytes": 4361,
+      "source_id": "synplanner_data",
+      "spdx_license": "MIT",
+      "url": "https://huggingface.co/Laboratoire-De-Chemoinformatique/SynPlanner/resolve/main/benchmarks/sascore/targets_with_sascore_1.5_2.5.smi"
+    },
+    "synplanner_targets_sa_2_5_3_5": {
+      "artifact_key": "synplanner_targets_sa_2_5_3_5",
+      "filename": "targets_with_sascore_2.5_3.5.smi",
+      "sha256": "68bc68a98549646e5509c2e46135f318517e4e96905575c9e38e30303160a61e",
+      "size_bytes": 4875,
+      "source_id": "synplanner_data",
+      "spdx_license": "MIT",
+      "url": "https://huggingface.co/Laboratoire-De-Chemoinformatique/SynPlanner/resolve/main/benchmarks/sascore/targets_with_sascore_2.5_3.5.smi"
+    },
+    "synplanner_targets_sa_3_5_4_5": {
+      "artifact_key": "synplanner_targets_sa_3_5_4_5",
+      "filename": "targets_with_sascore_3.5_4.5.smi",
+      "sha256": "d8125674587b9b2ecfcc268ace17adc8f1cf35c2281a001cbc9487d744d42856",
+      "size_bytes": 5398,
+      "source_id": "synplanner_data",
+      "spdx_license": "MIT",
+      "url": "https://huggingface.co/Laboratoire-De-Chemoinformatique/SynPlanner/resolve/main/benchmarks/sascore/targets_with_sascore_3.5_4.5.smi"
+    },
+    "synplanner_targets_sa_4_5_5_5": {
+      "artifact_key": "synplanner_targets_sa_4_5_5_5",
+      "filename": "targets_with_sascore_4.5_5.5.smi",
+      "sha256": "9b02a61ee21876b1977ac319d4305e9cfb201be531041953caceda517182516b",
+      "size_bytes": 6087,
+      "source_id": "synplanner_data",
+      "spdx_license": "MIT",
+      "url": "https://huggingface.co/Laboratoire-De-Chemoinformatique/SynPlanner/resolve/main/benchmarks/sascore/targets_with_sascore_4.5_5.5.smi"
+    },
+    "syntheseus_uspto_50k": {
+      "artifact_key": "syntheseus_uspto_50k",
+      "filename": "uspto50k.zip",
+      "sha256": "0f3871191a47f234ba5f5f48fca7fea08169718fe6d057c998a7588d8372f5c8",
+      "size_bytes": 19940280,
+      "source_id": "syntheseus_uspto_50k",
+      "spdx_license": "MIT",
+      "url": "https://ndownloader.figshare.com/files/45206101"
+    }
+  },
+  "environment": {
+    "platform": "Windows-10-10.0.26200-SP0",
+    "processor": "AMD64 Family 26 Model 96 Stepping 0, AuthenticAMD",
+    "python_version": "3.11.15",
+    "rdkit_version": "2026.03.4"
+  },
+  "multi_step_benchmark": {
+    "by_dataset": {
+      "paroutes_n1": {
+        "lookup_1step_smarts_2step": {
+          "mean_leaf_stock_completeness": 0.4875,
+          "mean_steps_when_solved": 1.0,
+          "mean_time_ms": 56.484,
+          "median_time_ms": 36.862,
+          "n_targets": 80,
+          "solve_rate": 0.025,
+          "solved_count": 2,
+          "solved_leaf_stock_completeness": 1.0
+        },
+        "retro_star_max4": {
+          "mean_leaf_stock_completeness": 0.8771,
+          "mean_steps_when_solved": 2.875,
+          "mean_time_ms": 258.182,
+          "median_time_ms": 178.284,
+          "n_targets": 80,
+          "solve_rate": 0.8,
+          "solved_count": 64,
+          "solved_leaf_stock_completeness": 1.0
+        },
+        "retro_star_max5": {
+          "mean_leaf_stock_completeness": 1.0,
+          "mean_steps_when_solved": 3.3,
+          "mean_time_ms": 262.54,
+          "median_time_ms": 180.465,
+          "n_targets": 80,
+          "solve_rate": 1.0,
+          "solved_count": 80,
+          "solved_leaf_stock_completeness": 1.0
+        },
+        "retro_star_max5_uspto50k_only": {
+          "mean_leaf_stock_completeness": 0.3563,
+          "mean_steps_when_solved": 1.8,
+          "mean_time_ms": 186.722,
+          "median_time_ms": 99.818,
+          "n_targets": 80,
+          "solve_rate": 0.0625,
+          "solved_count": 5,
+          "solved_leaf_stock_completeness": 1.0
+        },
+        "stock_only": {
+          "mean_leaf_stock_completeness": 0.0,
+          "mean_steps_when_solved": null,
+          "mean_time_ms": 2.114,
+          "median_time_ms": 1.127,
+          "n_targets": 80,
+          "solve_rate": 0.0,
+          "solved_count": 0,
+          "solved_leaf_stock_completeness": 1.0
+        }
+      },
+      "paroutes_n5": {
+        "lookup_1step_smarts_2step": {
+          "mean_leaf_stock_completeness": 0.4792,
+          "mean_steps_when_solved": null,
+          "mean_time_ms": 84.009,
+          "median_time_ms": 41.721,
+          "n_targets": 80,
+          "solve_rate": 0.0,
+          "solved_count": 0,
+          "solved_leaf_stock_completeness": 1.0
+        },
+        "retro_star_max4": {
+          "mean_leaf_stock_completeness": 0.9125,
+          "mean_steps_when_solved": 3.0,
+          "mean_time_ms": 291.682,
+          "median_time_ms": 200.147,
+          "n_targets": 80,
+          "solve_rate": 0.8375,
+          "solved_count": 67,
+          "solved_leaf_stock_completeness": 1.0
+        },
+        "retro_star_max5": {
+          "mean_leaf_stock_completeness": 1.0,
+          "mean_steps_when_solved": 3.325,
+          "mean_time_ms": 319.459,
+          "median_time_ms": 227.875,
+          "n_targets": 80,
+          "solve_rate": 1.0,
+          "solved_count": 80,
+          "solved_leaf_stock_completeness": 1.0
+        },
+        "retro_star_max5_uspto50k_only": {
+          "mean_leaf_stock_completeness": 0.3688,
+          "mean_steps_when_solved": 2.833,
+          "mean_time_ms": 217.274,
+          "median_time_ms": 107.83,
+          "n_targets": 80,
+          "solve_rate": 0.075,
+          "solved_count": 6,
+          "solved_leaf_stock_completeness": 1.0
+        },
+        "stock_only": {
+          "mean_leaf_stock_completeness": 0.0,
+          "mean_steps_when_solved": null,
+          "mean_time_ms": 2.816,
+          "median_time_ms": 1.438,
+          "n_targets": 80,
+          "solve_rate": 0.0,
+          "solved_count": 0,
+          "solved_leaf_stock_completeness": 1.0
+        }
+      },
+      "synplanner_sascore": {
+        "lookup_1step_smarts_2step": {
+          "mean_leaf_stock_completeness": 0.3167,
+          "mean_steps_when_solved": 1.0,
+          "mean_time_ms": 50.817,
+          "median_time_ms": 20.539,
+          "n_targets": 80,
+          "solve_rate": 0.0375,
+          "solved_count": 3,
+          "solved_leaf_stock_completeness": 1.0
+        },
+        "retro_star_max4": {
+          "mean_leaf_stock_completeness": 0.3375,
+          "mean_steps_when_solved": 1.5,
+          "mean_time_ms": 233.309,
+          "median_time_ms": 108.367,
+          "n_targets": 80,
+          "solve_rate": 0.075,
+          "solved_count": 6,
+          "solved_leaf_stock_completeness": 1.0
+        },
+        "retro_star_max5": {
+          "mean_leaf_stock_completeness": 0.3375,
+          "mean_steps_when_solved": 1.5,
+          "mean_time_ms": 242.877,
+          "median_time_ms": 123.401,
+          "n_targets": 80,
+          "solve_rate": 0.075,
+          "solved_count": 6,
+          "solved_leaf_stock_completeness": 1.0
+        },
+        "retro_star_max5_uspto50k_only": {
+          "mean_leaf_stock_completeness": 0.3375,
+          "mean_steps_when_solved": 1.5,
+          "mean_time_ms": 263.291,
+          "median_time_ms": 113.053,
+          "n_targets": 80,
+          "solve_rate": 0.075,
+          "solved_count": 6,
+          "solved_leaf_stock_completeness": 1.0
+        },
+        "stock_only": {
+          "mean_leaf_stock_completeness": 0.0,
+          "mean_steps_when_solved": null,
+          "mean_time_ms": 3.007,
+          "median_time_ms": 1.736,
+          "n_targets": 80,
+          "solve_rate": 0.0,
+          "solved_count": 0,
+          "solved_leaf_stock_completeness": 1.0
+        }
+      }
+    },
+    "by_paroutes_depth": {
+      "depth_2": {
+        "lookup_1step_smarts_2step": {
+          "mean_leaf_stock_completeness": 0.5083,
+          "mean_steps_when_solved": null,
+          "mean_time_ms": 43.26,
+          "median_time_ms": 30.1,
+          "n_targets": 40,
+          "solve_rate": 0.0,
+          "solved_count": 0,
+          "solved_leaf_stock_completeness": 1.0
+        },
+        "retro_star_max4": {
+          "mean_leaf_stock_completeness": 1.0,
+          "mean_steps_when_solved": 2.0,
+          "mean_time_ms": 174.956,
+          "median_time_ms": 104.258,
+          "n_targets": 40,
+          "solve_rate": 1.0,
+          "solved_count": 40,
+          "solved_leaf_stock_completeness": 1.0
+        },
+        "retro_star_max5": {
+          "mean_leaf_stock_completeness": 1.0,
+          "mean_steps_when_solved": 2.0,
+          "mean_time_ms": 168.668,
+          "median_time_ms": 90.482,
+          "n_targets": 40,
+          "solve_rate": 1.0,
+          "solved_count": 40,
+          "solved_leaf_stock_completeness": 1.0
+        },
+        "retro_star_max5_uspto50k_only": {
+          "mean_leaf_stock_completeness": 0.3,
+          "mean_steps_when_solved": 2.333,
+          "mean_time_ms": 140.444,
+          "median_time_ms": 70.754,
+          "n_targets": 40,
+          "solve_rate": 0.075,
+          "solved_count": 3,
+          "solved_leaf_stock_completeness": 1.0
+        },
+        "stock_only": {
+          "mean_leaf_stock_completeness": 0.0,
+          "mean_steps_when_solved": null,
+          "mean_time_ms": 2.257,
+          "median_time_ms": 1.166,
+          "n_targets": 40,
+          "solve_rate": 0.0,
+          "solved_count": 0,
+          "solved_leaf_stock_completeness": 1.0
+        }
+      },
+      "depth_3": {
+        "lookup_1step_smarts_2step": {
+          "mean_leaf_stock_completeness": 0.5042,
+          "mean_steps_when_solved": 1.0,
+          "mean_time_ms": 81.124,
+          "median_time_ms": 38.496,
+          "n_targets": 40,
+          "solve_rate": 0.05,
+          "solved_count": 2,
+          "solved_leaf_stock_completeness": 1.0
+        },
+        "retro_star_max4": {
+          "mean_leaf_stock_completeness": 1.0,
+          "mean_steps_when_solved": 2.8,
+          "mean_time_ms": 268.677,
+          "median_time_ms": 178.366,
+          "n_targets": 40,
+          "solve_rate": 1.0,
+          "solved_count": 40,
+          "solved_leaf_stock_completeness": 1.0
+        },
+        "retro_star_max5": {
+          "mean_leaf_stock_completeness": 1.0,
+          "mean_steps_when_solved": 2.8,
+          "mean_time_ms": 270.662,
+          "median_time_ms": 178.665,
+          "n_targets": 40,
+          "solve_rate": 1.0,
+          "solved_count": 40,
+          "solved_leaf_stock_completeness": 1.0
+        },
+        "retro_star_max5_uspto50k_only": {
+          "mean_leaf_stock_completeness": 0.4375,
+          "mean_steps_when_solved": 1.8,
+          "mean_time_ms": 232.97,
+          "median_time_ms": 114.577,
+          "n_targets": 40,
+          "solve_rate": 0.125,
+          "solved_count": 5,
+          "solved_leaf_stock_completeness": 1.0
+        },
+        "stock_only": {
+          "mean_leaf_stock_completeness": 0.0,
+          "mean_steps_when_solved": null,
+          "mean_time_ms": 2.753,
+          "median_time_ms": 1.264,
+          "n_targets": 40,
+          "solve_rate": 0.0,
+          "solved_count": 0,
+          "solved_leaf_stock_completeness": 1.0
+        }
+      },
+      "depth_4": {
+        "lookup_1step_smarts_2step": {
+          "mean_leaf_stock_completeness": 0.425,
+          "mean_steps_when_solved": null,
+          "mean_time_ms": 70.947,
+          "median_time_ms": 34.63,
+          "n_targets": 40,
+          "solve_rate": 0.0,
+          "solved_count": 0,
+          "solved_leaf_stock_completeness": 1.0
+        },
+        "retro_star_max4": {
+          "mean_leaf_stock_completeness": 1.0,
+          "mean_steps_when_solved": 3.85,
+          "mean_time_ms": 331.333,
+          "median_time_ms": 253.503,
+          "n_targets": 40,
+          "solve_rate": 1.0,
+          "solved_count": 40,
+          "solved_leaf_stock_completeness": 1.0
+        },
+        "retro_star_max5": {
+          "mean_leaf_stock_completeness": 1.0,
+          "mean_steps_when_solved": 3.85,
+          "mean_time_ms": 345.546,
+          "median_time_ms": 273.058,
+          "n_targets": 40,
+          "solve_rate": 1.0,
+          "solved_count": 40,
+          "solved_leaf_stock_completeness": 1.0
+        },
+        "retro_star_max5_uspto50k_only": {
+          "mean_leaf_stock_completeness": 0.3125,
+          "mean_steps_when_solved": null,
+          "mean_time_ms": 202.016,
+          "median_time_ms": 107.475,
+          "n_targets": 40,
+          "solve_rate": 0.0,
+          "solved_count": 0,
+          "solved_leaf_stock_completeness": 1.0
+        },
+        "stock_only": {
+          "mean_leaf_stock_completeness": 0.0,
+          "mean_steps_when_solved": null,
+          "mean_time_ms": 2.305,
+          "median_time_ms": 1.254,
+          "n_targets": 40,
+          "solve_rate": 0.0,
+          "solved_count": 0,
+          "solved_leaf_stock_completeness": 1.0
+        }
+      },
+      "depth_5": {
+        "lookup_1step_smarts_2step": {
+          "mean_leaf_stock_completeness": 0.4958,
+          "mean_steps_when_solved": null,
+          "mean_time_ms": 85.656,
+          "median_time_ms": 57.276,
+          "n_targets": 40,
+          "solve_rate": 0.0,
+          "solved_count": 0,
+          "solved_leaf_stock_completeness": 1.0
+        },
+        "retro_star_max4": {
+          "mean_leaf_stock_completeness": 0.5792,
+          "mean_steps_when_solved": 3.545,
+          "mean_time_ms": 324.763,
+          "median_time_ms": 272.234,
+          "n_targets": 40,
+          "solve_rate": 0.275,
+          "solved_count": 11,
+          "solved_leaf_stock_completeness": 1.0
+        },
+        "retro_star_max5": {
+          "mean_leaf_stock_completeness": 1.0,
+          "mean_steps_when_solved": 4.6,
+          "mean_time_ms": 379.123,
+          "median_time_ms": 328.699,
+          "n_targets": 40,
+          "solve_rate": 1.0,
+          "solved_count": 40,
+          "solved_leaf_stock_completeness": 1.0
+        },
+        "retro_star_max5_uspto50k_only": {
+          "mean_leaf_stock_completeness": 0.4,
+          "mean_steps_when_solved": 3.333,
+          "mean_time_ms": 232.562,
+          "median_time_ms": 138.427,
+          "n_targets": 40,
+          "solve_rate": 0.075,
+          "solved_count": 3,
+          "solved_leaf_stock_completeness": 1.0
+        },
+        "stock_only": {
+          "mean_leaf_stock_completeness": 0.0,
+          "mean_steps_when_solved": null,
+          "mean_time_ms": 2.546,
+          "median_time_ms": 1.419,
+          "n_targets": 40,
+          "solve_rate": 0.0,
+          "solved_count": 0,
+          "solved_leaf_stock_completeness": 1.0
+        }
+      }
+    },
+    "by_sascore_band": {
+      "[1.5, 2.5)": {
+        "lookup_1step_smarts_2step": {
+          "mean_leaf_stock_completeness": 0.5026,
+          "mean_steps_when_solved": 1.0,
+          "mean_time_ms": 61.47,
+          "median_time_ms": 28.275,
+          "n_targets": 65,
+          "solve_rate": 0.0462,
+          "solved_count": 3,
+          "solved_leaf_stock_completeness": 1.0
+        },
+        "retro_star_max4": {
+          "mean_leaf_stock_completeness": 0.8,
+          "mean_steps_when_solved": 2.605,
+          "mean_time_ms": 252.168,
+          "median_time_ms": 180.102,
+          "n_targets": 65,
+          "solve_rate": 0.6615,
+          "solved_count": 43,
+          "solved_leaf_stock_completeness": 1.0
+        },
+        "retro_star_max5": {
+          "mean_leaf_stock_completeness": 0.8615,
+          "mean_steps_when_solved": 2.94,
+          "mean_time_ms": 265.267,
+          "median_time_ms": 172.427,
+          "n_targets": 65,
+          "solve_rate": 0.7692,
+          "solved_count": 50,
+          "solved_leaf_stock_completeness": 1.0
+        },
+        "retro_star_max5_uspto50k_only": {
+          "mean_leaf_stock_completeness": 0.4692,
+          "mean_steps_when_solved": 1.909,
+          "mean_time_ms": 203.065,
+          "median_time_ms": 99.475,
+          "n_targets": 65,
+          "solve_rate": 0.1692,
+          "solved_count": 11,
+          "solved_leaf_stock_completeness": 1.0
+        },
+        "stock_only": {
+          "mean_leaf_stock_completeness": 0.0,
+          "mean_steps_when_solved": null,
+          "mean_time_ms": 2.397,
+          "median_time_ms": 1.114,
+          "n_targets": 65,
+          "solve_rate": 0.0,
+          "solved_count": 0,
+          "solved_leaf_stock_completeness": 1.0
+        }
+      },
+      "[2.5, 3.5)": {
+        "lookup_1step_smarts_2step": {
+          "mean_leaf_stock_completeness": 0.4464,
+          "mean_steps_when_solved": 1.0,
+          "mean_time_ms": 70.115,
+          "median_time_ms": 33.805,
+          "n_targets": 115,
+          "solve_rate": 0.0087,
+          "solved_count": 1,
+          "solved_leaf_stock_completeness": 1.0
+        },
+        "retro_star_max4": {
+          "mean_leaf_stock_completeness": 0.7841,
+          "mean_steps_when_solved": 3.039,
+          "mean_time_ms": 282.551,
+          "median_time_ms": 176.423,
+          "n_targets": 115,
+          "solve_rate": 0.6609,
+          "solved_count": 76,
+          "solved_leaf_stock_completeness": 1.0
+        },
+        "retro_star_max5": {
+          "mean_leaf_stock_completeness": 0.8826,
+          "mean_steps_when_solved": 3.432,
+          "mean_time_ms": 295.323,
+          "median_time_ms": 206.595,
+          "n_targets": 115,
+          "solve_rate": 0.8261,
+          "solved_count": 95,
+          "solved_leaf_stock_completeness": 1.0
+        },
+        "retro_star_max5_uspto50k_only": {
+          "mean_leaf_stock_completeness": 0.3348,
+          "mean_steps_when_solved": 2.5,
+          "mean_time_ms": 221.757,
+          "median_time_ms": 110.937,
+          "n_targets": 115,
+          "solve_rate": 0.0348,
+          "solved_count": 4,
+          "solved_leaf_stock_completeness": 1.0
+        },
+        "stock_only": {
+          "mean_leaf_stock_completeness": 0.0,
+          "mean_steps_when_solved": null,
+          "mean_time_ms": 2.844,
+          "median_time_ms": 1.444,
+          "n_targets": 115,
+          "solve_rate": 0.0,
+          "solved_count": 0,
+          "solved_leaf_stock_completeness": 1.0
+        }
+      },
+      "[3.5, 4.5)": {
+        "lookup_1step_smarts_2step": {
+          "mean_leaf_stock_completeness": 0.3289,
+          "mean_steps_when_solved": null,
+          "mean_time_ms": 58.484,
+          "median_time_ms": 29.044,
+          "n_targets": 38,
+          "solve_rate": 0.0,
+          "solved_count": 0,
+          "solved_leaf_stock_completeness": 1.0
+        },
+        "retro_star_max4": {
+          "mean_leaf_stock_completeness": 0.5658,
+          "mean_steps_when_solved": 3.0,
+          "mean_time_ms": 232.81,
+          "median_time_ms": 196.2,
+          "n_targets": 38,
+          "solve_rate": 0.3947,
+          "solved_count": 15,
+          "solved_leaf_stock_completeness": 1.0
+        },
+        "retro_star_max5": {
+          "mean_leaf_stock_completeness": 0.6053,
+          "mean_steps_when_solved": 3.333,
+          "mean_time_ms": 239.057,
+          "median_time_ms": 181.466,
+          "n_targets": 38,
+          "solve_rate": 0.4737,
+          "solved_count": 18,
+          "solved_leaf_stock_completeness": 1.0
+        },
+        "retro_star_max5_uspto50k_only": {
+          "mean_leaf_stock_completeness": 0.2632,
+          "mean_steps_when_solved": null,
+          "mean_time_ms": 242.982,
+          "median_time_ms": 121.392,
+          "n_targets": 38,
+          "solve_rate": 0.0,
+          "solved_count": 0,
+          "solved_leaf_stock_completeness": 1.0
+        },
+        "stock_only": {
+          "mean_leaf_stock_completeness": 0.0,
+          "mean_steps_when_solved": null,
+          "mean_time_ms": 3.044,
+          "median_time_ms": 1.807,
+          "n_targets": 38,
+          "solve_rate": 0.0,
+          "solved_count": 0,
+          "solved_leaf_stock_completeness": 1.0
+        }
+      },
+      "[4.5, 10.0]": {
+        "lookup_1step_smarts_2step": {
+          "mean_leaf_stock_completeness": 0.2803,
+          "mean_steps_when_solved": 1.0,
+          "mean_time_ms": 46.528,
+          "median_time_ms": 1.236,
+          "n_targets": 22,
+          "solve_rate": 0.0455,
+          "solved_count": 1,
+          "solved_leaf_stock_completeness": 1.0
+        },
+        "retro_star_max4": {
+          "mean_leaf_stock_completeness": 0.2955,
+          "mean_steps_when_solved": 2.0,
+          "mean_time_ms": 223.76,
+          "median_time_ms": 85.264,
+          "n_targets": 22,
+          "solve_rate": 0.1364,
+          "solved_count": 3,
+          "solved_leaf_stock_completeness": 1.0
+        },
+        "retro_star_max5": {
+          "mean_leaf_stock_completeness": 0.2955,
+          "mean_steps_when_solved": 2.0,
+          "mean_time_ms": 259.153,
+          "median_time_ms": 76.947,
+          "n_targets": 22,
+          "solve_rate": 0.1364,
+          "solved_count": 3,
+          "solved_leaf_stock_completeness": 1.0
+        },
+        "retro_star_max5_uspto50k_only": {
+          "mean_leaf_stock_completeness": 0.2727,
+          "mean_steps_when_solved": 2.0,
+          "mean_time_ms": 247.654,
+          "median_time_ms": 81.862,
+          "n_targets": 22,
+          "solve_rate": 0.0909,
+          "solved_count": 2,
+          "solved_leaf_stock_completeness": 1.0
+        },
+        "stock_only": {
+          "mean_leaf_stock_completeness": 0.0,
+          "mean_steps_when_solved": null,
+          "mean_time_ms": 1.655,
+          "median_time_ms": 1.355,
+          "n_targets": 22,
+          "solve_rate": 0.0,
+          "solved_count": 0,
+          "solved_leaf_stock_completeness": 1.0
+        }
+      }
+    },
+    "n_targets_total": 240,
+    "overall": {
+      "lookup_1step_smarts_2step": {
+        "mean_leaf_stock_completeness": 0.4278,
+        "mean_steps_when_solved": 1.0,
+        "mean_time_ms": 63.77,
+        "median_time_ms": 29.627,
+        "n_targets": 240,
+        "solve_rate": 0.0208,
+        "solved_count": 5,
+        "solved_leaf_stock_completeness": 1.0
+      },
+      "retro_star_max4": {
+        "mean_leaf_stock_completeness": 0.709,
+        "mean_steps_when_solved": 2.876,
+        "mean_time_ms": 261.058,
+        "median_time_ms": 176.06,
+        "n_targets": 240,
+        "solve_rate": 0.5708,
+        "solved_count": 137,
+        "solved_leaf_stock_completeness": 1.0
+      },
+      "retro_star_max5": {
+        "mean_leaf_stock_completeness": 0.7792,
+        "mean_steps_when_solved": 3.247,
+        "mean_time_ms": 274.959,
+        "median_time_ms": 178.665,
+        "n_targets": 240,
+        "solve_rate": 0.6917,
+        "solved_count": 166,
+        "solved_leaf_stock_completeness": 1.0
+      },
+      "retro_star_max5_uspto50k_only": {
+        "mean_leaf_stock_completeness": 0.3542,
+        "mean_steps_when_solved": 2.059,
+        "mean_time_ms": 222.429,
+        "median_time_ms": 105.54,
+        "n_targets": 240,
+        "solve_rate": 0.0708,
+        "solved_count": 17,
+        "solved_leaf_stock_completeness": 1.0
+      },
+      "stock_only": {
+        "mean_leaf_stock_completeness": 0.0,
+        "mean_steps_when_solved": null,
+        "mean_time_ms": 2.646,
+        "median_time_ms": 1.378,
+        "n_targets": 240,
+        "solve_rate": 0.0,
+        "solved_count": 0,
+        "solved_leaf_stock_completeness": 1.0
+      }
+    },
+    "paroutes_convergent_subset": {
+      "lookup_1step_smarts_2step": {
+        "mean_leaf_stock_completeness": 0.5,
+        "mean_steps_when_solved": null,
+        "mean_time_ms": 141.642,
+        "median_time_ms": 139.036,
+        "n_targets": 10,
+        "solve_rate": 0.0,
+        "solved_count": 0,
+        "solved_leaf_stock_completeness": 1.0
+      },
+      "retro_star_max4": {
+        "mean_leaf_stock_completeness": 0.75,
+        "mean_steps_when_solved": 4.0,
+        "mean_time_ms": 463.58,
+        "median_time_ms": 472.281,
+        "n_targets": 10,
+        "solve_rate": 0.7,
+        "solved_count": 7,
+        "solved_leaf_stock_completeness": 1.0
+      },
+      "retro_star_max5": {
+        "mean_leaf_stock_completeness": 1.0,
+        "mean_steps_when_solved": 4.3,
+        "mean_time_ms": 467.875,
+        "median_time_ms": 545.739,
+        "n_targets": 10,
+        "solve_rate": 1.0,
+        "solved_count": 10,
+        "solved_leaf_stock_completeness": 1.0
+      },
+      "retro_star_max5_uspto50k_only": {
+        "mean_leaf_stock_completeness": 0.45,
+        "mean_steps_when_solved": 4.0,
+        "mean_time_ms": 448.275,
+        "median_time_ms": 470.765,
+        "n_targets": 10,
+        "solve_rate": 0.2,
+        "solved_count": 2,
+        "solved_leaf_stock_completeness": 1.0
+      },
+      "stock_only": {
+        "mean_leaf_stock_completeness": 0.0,
+        "mean_steps_when_solved": null,
+        "mean_time_ms": 3.498,
+        "median_time_ms": 3.271,
+        "n_targets": 10,
+        "solve_rate": 0.0,
+        "solved_count": 0,
+        "solved_leaf_stock_completeness": 1.0
+      }
+    },
+    "target_counts_by_dataset": {
+      "paroutes_n1": 80,
+      "paroutes_n5": 80,
+      "synplanner_sascore": 80
+    }
+  },
+  "seed": 20261127,
+  "uspto_50k_single_step": {
+    "dataset": "syntheseus_uspto_50k_test",
+    "methods": {
+      "lookup_trainval_plus_17_smarts": {
+        "median_time_ms": 6.043,
+        "top_1": 0.114,
+        "top_10": 0.166,
+        "top_3": 0.16,
+        "top_5": 0.166
+      },
+      "retro_star_lookup_trainval_plus_44_smarts": {
+        "median_time_ms": 17.822,
+        "top_1": 0.182,
+        "top_10": 0.43,
+        "top_3": 0.346,
+        "top_5": 0.4
+      }
+    },
+    "n_test_targets": 500,
+    "split_hygiene": "raw_train.csv + raw_val.csv indexed; raw_test.csv strictly held out (0 test leakage)"
+  }
+}
