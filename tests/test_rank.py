@@ -434,3 +434,37 @@ def test_symmetric_salt_matching_mw_scaling_quaternary_cations_and_stereo_flags(
     )
     assert r_benz[0].status == "makeable"
     assert r_benz[0].cost_complete is True
+    assert r_benz[0].data_source == "local_vendor_catalog"
+
+
+def test_mesoionic_zwitterion_desalting_never_raises_kekulize_exception_and_data_source_tags(
+    tmp_path: Path,
+) -> None:
+    # Mesoionic sydnone / pyridinium-betaine structures whose naive Uncharger output can fail kekulization
+    for smi in ("c1ccc([n+]2cc([O-])on2)cc1.Cl", "C[n+]1ccccc1[O-].Cl", "c1cc[n+](CC(=O)[O-])cc1"):
+        nm = normalize_smiles(smi, desalt=True)
+        assert nm is not None
+        assert len(nm.inchikey) == 27
+
+    # Synthetic demo catalog vs open stopping stock vs live vendor registry data_source classification
+    demo_stock = tmp_path / "demo.tsv"
+    demo_stock.write_text(
+        "smiles\tvendor\tcatalog_id\tpack_value\tpack_unit\tprice\tcurrency\tsource_id\tsource_url\tlicense\n"
+        "CCO\tautolab_ref_catalog\tREF-1\t1\tg\t0.05\tUSD\tlocal_stock\thttps://autolab.local/catalog/1\tCC0-1.0\n",
+        encoding="utf-8",
+    )
+    r_demo, recs_demo = evaluate_candidates(
+        ["CCO"],
+        backends=("local_stock",),
+        offline=True,
+        stock_paths=[demo_stock],
+        cache_path=tmp_path / "cdemo.sqlite",
+        reaction_db_path=tmp_path / "no.sqlite",
+        scscore_weights=tmp_path / "no.gz",
+    )
+    assert r_demo[0].data_source == "synthetic_reference_catalog"
+    assert recs_demo[0].data_source == "synthetic_reference_catalog"
+    assert recs_demo[0].origin == "synthetic_demo"
+    af_demo = recs_demo[0].to_assayfold_record()
+    assert af_demo.origin == "synthetic_demo"
+    assert "data_source:synthetic_reference_catalog" in af_demo.tags

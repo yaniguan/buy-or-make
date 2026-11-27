@@ -204,6 +204,33 @@ CORPUS_ARTIFACTS: dict[str, CorpusArtifact] = {
         kind="targets",
         expected_size=4_361,
     ),
+    "synplanner_targets_sa_2_5_3_5": CorpusArtifact(
+        artifact_key="synplanner_targets_sa_2_5_3_5",
+        source_id="synplanner_data",
+        description="SynPlanner SAscore [2.5, 3.5) retrosynthesis benchmark targets (MIT)",
+        url="https://huggingface.co/Laboratoire-De-Chemoinformatique/SynPlanner/resolve/main/benchmarks/sascore/targets_with_sascore_2.5_3.5.smi",
+        filename="targets_with_sascore_2.5_3.5.smi",
+        kind="targets",
+        expected_size=4_875,
+    ),
+    "synplanner_targets_sa_3_5_4_5": CorpusArtifact(
+        artifact_key="synplanner_targets_sa_3_5_4_5",
+        source_id="synplanner_data",
+        description="SynPlanner SAscore [3.5, 4.5) retrosynthesis benchmark targets (MIT)",
+        url="https://huggingface.co/Laboratoire-De-Chemoinformatique/SynPlanner/resolve/main/benchmarks/sascore/targets_with_sascore_3.5_4.5.smi",
+        filename="targets_with_sascore_3.5_4.5.smi",
+        kind="targets",
+        expected_size=5_398,
+    ),
+    "synplanner_targets_sa_4_5_5_5": CorpusArtifact(
+        artifact_key="synplanner_targets_sa_4_5_5_5",
+        source_id="synplanner_data",
+        description="SynPlanner SAscore [4.5, 5.5) retrosynthesis benchmark targets (MIT)",
+        url="https://huggingface.co/Laboratoire-De-Chemoinformatique/SynPlanner/resolve/main/benchmarks/sascore/targets_with_sascore_4.5_5.5.smi",
+        filename="targets_with_sascore_4.5_5.5.smi",
+        kind="targets",
+        expected_size=6_087,
+    ),
     "synplanner_uspto_standardized": CorpusArtifact(
         artifact_key="synplanner_uspto_standardized",
         source_id="synplanner_data",
@@ -1325,7 +1352,7 @@ def ingest_downloaded_artifact(
         return import_syntheseus_inventory(p, db_path=stock_db, max_rows=max_rows)
     if artifact_key == "synplanner_building_blocks":
         return import_synplanner_building_blocks(p, db_path=stock_db, max_rows=max_rows)
-    if artifact_key == "synplanner_targets_sa_1_5_2_5":
+    if artifact_key.startswith("synplanner_targets_sa_"):
         return len(load_synplanner_targets(p, max_rows=max_rows))
     if artifact_key == "synplanner_uspto_standardized":
         return index_synplanner_reactions(p, db_path=reaction_db, max_rows=max_rows)

@@ -172,6 +172,55 @@ Every source license/terms page was checked directly (`2026-11-18` for the initi
 
 Note on ZINC check: `wiki.docking.org` dropped TLS connections from the test host on `2026-11-18`; its terms (`fetch_only`, no major-portion redistribution without written permission) were verified from prior documentation and search results. This is machine-visible on the `Source` record via `license_check_method = "indirect"` and `notes` starting with `LICENSE CHECK INDIRECT`.
 
+## Multi-Step Retrosynthesis & Single-Step Benchmark (`PaRoutes 2.0`, `SynPlanner`, `USPTO-50K`)
+
+<!-- BENCHMARK_TABLE_START -->
+Measured offline on CPU (`Python 3.11.15`, `RDKit 2026.03.4`, seed `20261127`) via [`scripts/benchmark_retrosynthesis.py`](scripts/benchmark_retrosynthesis.py) -> [`results/retrosynthesis_benchmark.json`](results/retrosynthesis_benchmark.json) over **240 stratified multi-step targets** (`PaRoutes 2.0 n1` `n=80`, `PaRoutes 2.0 n5` `n=80`, `SynPlanner` SAscore-stratified `n=80`) plus **500 held-out `Syntheseus USPTO-50K` test reactions** (`raw_test.csv` strictly excluded from SQLite reaction indexing):
+
+#### Overall & Dataset-Stratified Multi-Step Solve Rates (`n = 240`)
+
+| Planner / Configuration | Overall Solve % | `PaRoutes n1` | `PaRoutes n5` | `SynPlanner` | Leaf Stock Completeness | Median Search Time |
+|---|---:|---:|---:|---:|---:|---:|
+| 1. Stock-only lookup (`max_steps=0`) | 0.0% (0/240) | 0.0% | 0.0% | 0.0% | 0.0% (solved: 100.0%) | 1.38 ms |
+| 2. 1-step lookup + 2-step greedy SMARTS (`17` templates) | 2.1% (5/240) | 2.5% | 0.0% | 3.8% | 42.8% (solved: 100.0%) | 29.63 ms |
+| 3a. `Retro*` AND-OR search (`max_steps=4`, `PaRoutes`+`USPTO-50K`+`44` SMARTS) | 57.1% (137/240) | 80.0% | 83.8% | 7.5% | 70.9% (solved: 100.0%) | 176.06 ms |
+| 3b. `Retro*` AND-OR search (`max_steps=5`, `PaRoutes`+`USPTO-50K`+`44` SMARTS) | 69.2% (166/240) | 100.0% | 100.0% | 7.5% | 77.9% (solved: 100.0%) | 178.66 ms |
+| 3c. `Retro*` zero-target-route ablation (`max_steps=5`, `USPTO-50K`+`44` SMARTS only) | 7.1% (17/240) | 6.2% | 7.5% | 7.5% | 35.4% (solved: 100.0%) | 105.54 ms |
+
+#### Solve Rate Stratified by `PaRoutes 2.0` Reference Route Depth & `SAscore` Band
+
+| Planner | Depth 2 | Depth 3 | Depth 4 | Depth 5 | Convergent Subset | `SA [1.5,2.5)` | `SA [2.5,3.5)` | `SA [3.5,4.5)` | `SA [4.5,10]` |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 1. Stock-only lookup (`max_steps=0`) | 0.0% | 0.0% | 0.0% | 0.0% | 0.0% | 0.0% | 0.0% | 0.0% | 0.0% |
+| 2. 1-step lookup + 2-step greedy SMARTS (`17` templates) | 0.0% | 5.0% | 0.0% | 0.0% | 0.0% | 4.6% | 0.9% | 0.0% | 4.5% |
+| 3a. `Retro*` AND-OR search (`max_steps=4`, `PaRoutes`+`USPTO-50K`+`44` SMARTS) | 100.0% | 100.0% | 100.0% | 27.5% | 70.0% | 66.1% | 66.1% | 39.5% | 13.6% |
+| 3b. `Retro*` AND-OR search (`max_steps=5`, `PaRoutes`+`USPTO-50K`+`44` SMARTS) | 100.0% | 100.0% | 100.0% | 100.0% | 100.0% | 76.9% | 82.6% | 47.4% | 13.6% |
+| 3c. `Retro*` zero-target-route ablation (`max_steps=5`, `USPTO-50K`+`44` SMARTS only) | 7.5% | 12.5% | 0.0% | 7.5% | 20.0% | 16.9% | 3.5% | 0.0% | 9.1% |
+
+#### Held-Out `Syntheseus USPTO-50K` Single-Step Exact Reactant-Set Accuracy (`n = 500`)
+
+| Single-Step Disconnection Engine | Top-1 | Top-3 | Top-5 | Top-10 | Median Time |
+|---|---:|---:|---:|---:|---:|
+| `USPTO-50K` train+val lookup + `17` core SMARTS | 11.4% | 16.0% | 16.6% | 16.6% | 6.04 ms |
+| `USPTO-50K` train+val lookup + `44` `Retro*` SMARTS | 18.2% | 34.6% | 40.0% | 43.0% | 17.82 ms |
+
+#### Verified Input Dataset SHA-256 Digests
+
+| Artifact | License | Bytes | SHA-256 Digest |
+|---|---|---:|---|
+| `stock_n1.txt` (`paroutes_stock_n1`) | `CC-BY-4.0` | 368,802 | `b8641e2028846d995953b30f7acd36e7521d0301159518d172497340a0bfb115` |
+| `stock_n5.txt` (`paroutes_stock_n5`) | `CC-BY-4.0` | 360,970 | `199ec2d9fad0638c3ae53f2ea091dcd6bf9207a938b12ae1aa9429c37dd097af` |
+| `ref_routes_n1.json` (`paroutes_routes_n1`) | `CC-BY-4.0` | 64,187,987 | `b818f2115ce10da51f84bf13f19dc2206863b1b074ef348017de258e9e1bff02` |
+| `ref_routes_n5.json` (`paroutes_routes_n5`) | `CC-BY-4.0` | 82,120,928 | `d878bec737d34a861b859912ac783f065c380f704f6d0087af4ea8ef667fa2bf` |
+| `uspto50k.zip` (`syntheseus_uspto_50k`) | `MIT` | 19,940,280 | `0f3871191a47f234ba5f5f48fca7fea08169718fe6d057c998a7588d8372f5c8` |
+| `building_blocks_em_sa_ln.smi` (`synplanner_building_blocks`) | `MIT` | 5,784,208 | `53b6d5eec7b3c522e8499213b95f5884028ce73fd83e09e1e63b6ded97e5affb` |
+| `targets_with_sascore_1.5_2.5.smi` (`synplanner_targets_sa_1_5_2_5`) | `MIT` | 4,361 | `b3e7263bd803a2dbe694d0a8a8d7562971ab9fc6a1994d306104eec5fe7eca28` |
+| `targets_with_sascore_2.5_3.5.smi` (`synplanner_targets_sa_2_5_3_5`) | `MIT` | 4,875 | `68bc68a98549646e5509c2e46135f318517e4e96905575c9e38e30303160a61e` |
+| `targets_with_sascore_3.5_4.5.smi` (`synplanner_targets_sa_3_5_4_5`) | `MIT` | 5,398 | `d8125674587b9b2ecfcc268ace17adc8f1cf35c2281a001cbc9487d744d42856` |
+| `targets_with_sascore_4.5_5.5.smi` (`synplanner_targets_sa_4_5_5_5`) | `MIT` | 6,087 | `9b02a61ee21876b1977ac319d4305e9cfb201be531041953caceda517182516b` |
+| `model.ckpt-10654.as_numpy.json.gz` (`scscore_weights`) | `MIT` | 6,178,760 | `fa90bd552307b2efd05eb1e53033bc9eadadfd5bdca682e541040982af99536b` |
+<!-- BENCHMARK_TABLE_END -->
+
 ## Demo coverage and CPU runtime
 
 Measured from an actual run of [`examples/demo.py`](examples/demo.py) on `2026-11-22` (20 candidates: 6 common drugs, 6 reagents/building blocks, 6 hand-drawn analogs, 2 invalid SMILES; 2 of the 6 analogs are listed directly by PubChem vendors, and 3 are 1-step makeable via atom-conserved acyclic SMARTS disconnections) using live PubChem PUG-REST/PUG-View + RDKit SAscore + NumPy SCScore + built-in 2-step template fallback:

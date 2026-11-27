@@ -25,10 +25,34 @@ jobs:
           python -m pip install --upgrade pip
           pip install -e ".[test,hdf5]"
       - name: Lint with ruff
-        run: ruff check buyormake scripts examples tests
+        run: ruff check buyormake scripts examples tests autolab_wire.py community_extensions
       - name: Verify zero JSON Schema drift
         run: |
           buy-or-make export-schema --out schema
           git diff --exit-code schema/
       - name: Run pytest
         run: pytest -v
+
+  lean:
+    name: Lean 4.36.0 Proofs & Differential Parity
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+      - name: Install Python package for differential parity
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[test]"
+      - name: Install elan and Lean 4.36.0 toolchain
+        run: |
+          curl https://elan.lean-lang.org/elan-init.sh -sSf | sh -s -- -y --default-toolchain leanprover/lean4:v4.36.0
+          echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
+      - name: Build BuyOrMakeLean
+        working-directory: lean
+        run: lake build
+      - name: Verify #print axioms and >=100-case Python differential parity
+        run: python scripts/check_lean_axioms_and_parity.py

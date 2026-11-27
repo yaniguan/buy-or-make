@@ -14,6 +14,7 @@ from .cost import (
     estimate_route_cost_bounds,
     min_outlay_for_offers,
 )
+from .retro_star import RETRO_STAR_TEMPLATE_DELTAS
 from .routes import RETRO_TEMPLATE_DELTAS
 from .schema import (
     AssayfoldRecord,
@@ -133,7 +134,9 @@ def build_precursor_attribution_basis(
     for idx, step in enumerate(route.steps):
         ref = step.template_or_reference or ""
         tpl_name = ref.split(":", 1)[0].strip()
-        if tpl_name in RETRO_TEMPLATE_DELTAS:
+        if tpl_name in RETRO_STAR_TEMPLATE_DELTAS:
+            delta = dict(RETRO_STAR_TEMPLATE_DELTAS[tpl_name])
+        elif tpl_name in RETRO_TEMPLATE_DELTAS:
             delta = dict(RETRO_TEMPLATE_DELTAS[tpl_name])
         else:
             p_counts = _heavy_counts_from_smiles(step.product)
