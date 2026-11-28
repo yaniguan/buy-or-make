@@ -16,7 +16,7 @@ from rdkit.Chem import rdChemReactions
 
 from .cache import open_readonly_sqlite
 from .canonical import NormalizedMol, normalize_smiles
-from .cost import EST_COST_METHOD, estimate_route_cost_bounds, route_cost_method
+from .cost import EST_COST_METHOD, estimate_route_cost_bounds, purchasable_offers, route_cost_method
 from .schema import Offer, Route, RouteStep
 
 DEFAULT_REACTION_DB = Path("data/reactions.sqlite")
@@ -639,7 +639,7 @@ def _resolve_leaf_offers(
     desalt_fallback: bool = True,
 ) -> list[Offer]:
     if nm.inchikey not in offer_cache:
-        offs = list(offer_lookup(nm.inchikey, nm.canonical_smiles))
+        offs = purchasable_offers(offer_lookup(nm.inchikey, nm.canonical_smiles))
         if not offs and desalt_fallback and (
             "." in nm.canonical_smiles
             or "+" in nm.canonical_smiles
@@ -648,12 +648,12 @@ def _resolve_leaf_offers(
             p_nm = normalize_smiles(nm.canonical_smiles, desalt=True)
             if p_nm is not None and p_nm.inchikey != nm.inchikey:
                 if p_nm.inchikey not in offer_cache:
-                    offer_cache[p_nm.inchikey] = list(
+                    offer_cache[p_nm.inchikey] = purchasable_offers(
                         offer_lookup(p_nm.inchikey, p_nm.canonical_smiles)
                     )
-                offs = list(offer_cache[p_nm.inchikey])
+                offs = purchasable_offers(offer_cache[p_nm.inchikey])
         offer_cache[nm.inchikey] = offs
-    return offer_cache[nm.inchikey]
+    return purchasable_offers(offer_cache[nm.inchikey])
 
 
 def _score_route_for_selection(route: Route) -> tuple:
@@ -1028,4 +1028,4 @@ def _is_purchasable(
     if nm is None:
         return False
     offs = _resolve_leaf_offers(nm, offer_cache, offer_lookup, desalt_fallback=desalt_fallback)
-    return len(offs) > 0
+    return len(purchasable_offers(offs)) > 0

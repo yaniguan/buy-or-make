@@ -175,7 +175,11 @@ def test_bulk_drum_moq_outlay_and_max_pack_multiple_gate() -> None:
     # Uncapped unit price sees $0.50/g drum lower bound, while discrete MOQ outlay is $45 + $1 = $46
     bounds = estimate_route_cost_bounds(target, [acid, amine], leaf_offers)
     assert bounds.est_cost is not None and bounds.est_cost.value < 1.0
+    assert bounds.est_cost.unit == "USD/g"
+    assert bounds.lower_bound_cost is not None and bounds.lower_bound_cost.unit == "USD/g"
+    assert bounds.yield_adjusted_cost is not None and bounds.yield_adjusted_cost.unit == "USD/g"
     assert bounds.min_outlay_cost is not None
+    assert bounds.min_outlay_cost.unit == "USD"
     assert bounds.min_outlay_cost.value == pytest.approx(46.0)
 
     # Capping max_pack_multiple=50 on a 1 g synthesis excludes the 1 kg drum and uses the $45/1 g vial

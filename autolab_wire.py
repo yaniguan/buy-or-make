@@ -38,6 +38,7 @@ from buyormake.handoff import (  # noqa: E402
 from buyormake.rank import evaluate_candidates, filter_decisions_from_ranked  # noqa: E402
 from buyormake.retro_star import (  # noqa: E402
     RETRO_STAR_TEMPLATE_DELTAS,
+    RING_SYNTHESIS_RETRO_STAR_TEMPLATES,
     UNIMOLECULAR_RETRO_STAR_TEMPLATES,
 )
 from buyormake.schema import Route  # noqa: E402
@@ -88,7 +89,10 @@ def _route_is_acyclic_and_atom_balanced(route: Route, max_steps: int) -> bool:
         is_unimol_fgi = (
             tpl_name in UNIMOLECULAR_RETRO_STAR_TEMPLATES and len(step.reactants) == 1
         )
-        if not (is_acyclic_bimol or is_unimol_fgi):
+        is_ring_condensation = (
+            tpl_name in RING_SYNTHESIS_RETRO_STAR_TEMPLATES and len(step.reactants) == 2
+        )
+        if not (is_acyclic_bimol or is_unimol_fgi or is_ring_condensation):
             return False
         delta = RETRO_STAR_TEMPLATE_DELTAS.get(tpl_name)
         prod_counts = _heavy_counts(step.product)
@@ -480,7 +484,7 @@ def process_packet(packet: dict[str, Any]) -> dict[str, Any]:
                 res.cost_complete
                 and res.est_cost is not None
                 and res.est_cost.value is not None
-                and res.est_cost.unit in {"USD", "USD/g"}
+                and res.est_cost.unit == "USD/g"
             ):
                 price = round(float(res.est_cost.value), 4)
                 price_basis = "listed_catalog"

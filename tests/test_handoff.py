@@ -52,7 +52,7 @@ def test_to_assayfold_record_roundtrip_and_license_gate() -> None:
                 leaves_purchasable=[True, True],
                 method="reaction_lookup (ord_lookup)",
                 score=0.88,
-                est_cost=Quantity(value=1.25, unit="USD"),
+                est_cost=Quantity(value=1.25, unit="USD/g"),
                 est_cost_method="leaf sum",
                 est_cost_complete=True,
             )
@@ -146,7 +146,7 @@ def test_labshift_procurement_release_time_handoff() -> None:
                 leaves=[l1_nm.canonical_smiles, l2_nm.canonical_smiles, l3_nm.canonical_smiles],
                 leaves_purchasable=[True, True, True],
                 method="template_fallback",
-                est_cost=Quantity(value=4.2, unit="USD"),
+                est_cost=Quantity(value=4.2, unit="USD/g"),
                 est_cost_method="leaf sum",
                 est_cost_complete=True,
             )
@@ -267,3 +267,59 @@ def test_evaluate_candidates_persists_leaf_offers_for_automatic_handoff(tmp_path
     basis, rxn_steps = build_precursor_attribution_basis(rec.routes[0], rec.leaf_offers)
     assert {b["catalog_id"] for b in basis} == {"MBA-1", "BRA-2", "PYB-3"}
     assert len(rxn_steps) == 2
+
+
+def test_handoff_respects_in_stock_false_and_preserves_in_stock_none() -> None:
+    """Issue #36: all-out-of-stock offers give schedulable=False, release_time_minutes=None, omitted from release map."""
+    asp_nm = normalize_smiles("CC(=O)Oc1ccccc1C(=O)O")
+    etoh_nm = normalize_smiles("CCO")
+    assert asp_nm and etoh_nm
+
+    rec_oos = AvailabilityRecord(
+        molecule=Molecule(smiles=asp_nm.canonical_smiles, inchikey=asp_nm.inchikey),
+        offers=[
+            Offer(
+                inchikey=asp_nm.inchikey,
+                vendor="OutVendor",
+                pack_size=Quantity(value=1.0, unit="g", raw_unit_str="1 g"),
+                price=999.0,
+                currency="USD",
+                price_basis="listed_catalog",
+                in_stock=False,
+                source_id="local_stock",
+                source_url="https://example.org/oos",
+                license="CC0-1.0",
+            )
+        ],
+        licenses=["CC0-1.0"],
+    ).sealed()
+
+    c_oos = to_procurement_constraint(rec_oos)
+    assert c_oos.status == "unknown"
+    assert c_oos.schedulable is False
+    assert c_oos.release_time_minutes is None
+    assert c_oos.est_cost is not None and c_oos.est_cost.value == pytest.approx(999.0)
+    assert any("flagged out of stock" in note for note in c_oos.notes)
+    assert not any("unlisted" in note for note in c_oos.notes)
+    assert build_labshift_release_map([rec_oos]) == {}
+
+    rec_none_flag = AvailabilityRecord(
+        molecule=Molecule(smiles=etoh_nm.canonical_smiles, inchikey=etoh_nm.inchikey, name="Ethanol"),
+        offers=[
+            Offer(
+                inchikey=etoh_nm.inchikey,
+                vendor="PubVendor",
+                lead_time_days=3,
+                in_stock=None,
+                source_id="pubchem_pug",
+                source_url="https://example.org/pub",
+                license="custom/terms",
+            )
+        ],
+        licenses=["custom/terms"],
+    ).sealed()
+    c_none = to_procurement_constraint(rec_none_flag)
+    assert c_none.status == "buyable"
+    assert c_none.schedulable is True
+    assert c_none.release_time_minutes == 3 * 1440
+    assert build_labshift_release_map([rec_oos, rec_none_flag]) == {"Ethanol": 3 * 1440}

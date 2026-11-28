@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, Optional
@@ -14,6 +15,7 @@ from .cost import (
     cheapest_offer_for_target,
     estimate_route_cost_bounds,
     min_outlay_for_offers,
+    purchasable_offers,
     skipped_leaves_from_method,
 )
 from .handoff import _min_offer_lead_days
@@ -78,7 +80,7 @@ def _rank_sort_key(res: RankResult) -> tuple[int, int, int, str, float]:
         if has_cost and res.est_cost is not None and res.est_cost.value is not None:
             unit = res.est_cost.unit
             cost_val = float(res.est_cost.value)
-            if res.cost_complete and unit in {"USD", "USD/g"}:
+            if res.cost_complete and unit == "USD/g":
                 cost_tier = 0
             elif res.cost_complete:
                 cost_tier = 1
@@ -199,6 +201,7 @@ class _EvaluatedEntry:
     min_outlay_cost: Optional[Quantity]
     step_yield_assumed: float
     cost_complete: bool
+    all_offers_out_of_stock: bool
     lead_time_days: Optional[int]
     moq_pack_g: Optional[float]
     precursor_smiles: list[str]
@@ -302,12 +305,14 @@ def evaluate_candidates(
         lnm = normalize_smiles(canonical_smiles, desalt=False)
         if lnm is not None:
             offer_mol_weights[lnm.inchikey] = lnm.mol_weight
-        found = list(lookup_exact_offers(inchikey, canonical_smiles))
+        found = purchasable_offers(lookup_exact_offers(inchikey, canonical_smiles))
         if not found and desalt_fallback:
             # Neutral retrosynthetic leaf -> pharmaceutical salt/hydrate stock equivalent
             if local_stock is not None and (lnm is None or not lnm.has_permanent_charge):
                 found.extend(
-                    local_stock.lookup_parent_equivalents(inchikey, exclude_inchikey=inchikey)
+                    purchasable_offers(
+                        local_stock.lookup_parent_equivalents(inchikey, exclude_inchikey=inchikey)
+                    )
                 )
                 offer_mol_weights.update(local_stock.known_mol_weights())
             # Salt/hydrate leaf -> desalted neutral parent or sibling salt stock
@@ -319,10 +324,14 @@ def evaluate_candidates(
                 p_nm = normalize_smiles(canonical_smiles, desalt=True)
                 if p_nm is not None and p_nm.inchikey != inchikey:
                     offer_mol_weights[p_nm.inchikey] = p_nm.mol_weight
-                    found = list(lookup_exact_offers(p_nm.inchikey, p_nm.canonical_smiles))
+                    found = purchasable_offers(
+                        lookup_exact_offers(p_nm.inchikey, p_nm.canonical_smiles)
+                    )
                     if not found and local_stock is not None:
-                        found = local_stock.lookup_parent_equivalents(
-                            p_nm.inchikey, exclude_inchikey=inchikey
+                        found = purchasable_offers(
+                            local_stock.lookup_parent_equivalents(
+                                p_nm.inchikey, exclude_inchikey=inchikey
+                            )
                         )
                         offer_mol_weights.update(local_stock.known_mol_weights())
         leaf_offer_cache[inchikey] = found
@@ -351,8 +360,10 @@ def evaluate_candidates(
                         n_steps=None,
                         best_price=None,
                         est_cost=None,
+                        target_scale_g=target_scale_g,
                         step_yield_assumed=default_step_yield,
                         cost_complete=False,
+                        all_offers_out_of_stock=False,
                         data_source=data_source_override or "unmatched",
                         sa_scores=None,
                         reasons=["invalid SMILES; RDKit could not parse structure"],
@@ -372,7 +383,7 @@ def evaluate_candidates(
                 parent_nm = None
 
                 # Symmetric salt-form equivalence (salt -> freebase AND freebase -> salt)
-                if not offers and desalt_fallback:
+                if not purchasable_offers(offers) and desalt_fallback:
                     if (
                         "." in nm.canonical_smiles
                         or "+" in nm.canonical_smiles
@@ -387,24 +398,24 @@ def evaluate_candidates(
                                     parent_nm.inchikey, parent_nm.canonical_smiles
                                 )
                             )
-                            if not parent_offers and local_stock is not None:
+                            if not purchasable_offers(parent_offers) and local_stock is not None:
                                 parent_offers = local_stock.lookup_parent_equivalents(
                                     parent_nm.inchikey, exclude_inchikey=nm.inchikey
                                 )
                                 offer_mol_weights.update(local_stock.known_mol_weights())
-                            if parent_offers:
+                            if purchasable_offers(parent_offers) or (not offers and parent_offers):
                                 offers = parent_offers
                                 inchikey_match = "salt_equivalent"
                                 desalt_reason = (
                                     f"matched desalted parent structure {parent_nm.canonical_smiles} "
-                                    f"({parent_nm.inchikey}) after exact salt/mixture form had 0 offers"
+                                    f"({parent_nm.inchikey}) after exact salt/mixture form had 0 purchasable offers"
                                 )
                     elif local_stock is not None and not nm.has_permanent_charge:
                         salt_offers = local_stock.lookup_parent_equivalents(
                             nm.inchikey, exclude_inchikey=nm.inchikey
                         )
                         offer_mol_weights.update(local_stock.known_mol_weights())
-                        if salt_offers:
+                        if purchasable_offers(salt_offers) or (not offers and salt_offers):
                             offers = salt_offers
                             inchikey_match = "salt_equivalent"
                             salt_iks = ", ".join(sorted({o.inchikey for o in salt_offers}))
@@ -426,10 +437,11 @@ def evaluate_candidates(
                     if local_stock is not None
                     else []
                 )
-                stereo_iks = sorted({o.inchikey for o in stereo_offers})
-                if not offers and stereo_offers:
+                purchasable_stereo = purchasable_offers(stereo_offers)
+                stereo_iks = sorted({o.inchikey for o in purchasable_stereo})
+                if not purchasable_offers(offers) and purchasable_stereo:
                     if stereo_relaxed:
-                        offers = list(stereo_offers)
+                        offers = list(purchasable_stereo)
                         inchikey_match = "stereoisomer_relaxed"
                         stereo_reason = (
                             f"stereoisomer_relaxed: matched 14-char connectivity block "
@@ -438,7 +450,7 @@ def evaluate_candidates(
                         )
                     else:
                         stereo_reason = (
-                            f"stereoisomer_advisory: exact 27-char InChIKey had 0 offers, "
+                            f"stereoisomer_advisory: exact 27-char InChIKey had 0 purchasable offers, "
                             f"but connectivity block {nm.connectivity_block} matched "
                             f"stereoisomer/racemate stock ({', '.join(stereo_iks)}); "
                             f"pass stereo_relaxed=True to accept stereoisomeric stock"
@@ -469,13 +481,61 @@ def evaluate_candidates(
                 precursor_smiles: list[str] = []
                 matched_offer_iks = sorted({o.inchikey for o in offers})
 
-                if offers:
+                purchasable = purchasable_offers(offers)
+                all_offers_oos = bool(offers) and not purchasable
+                max_pack_g = (
+                    target_scale_g * max_pack_multiple
+                    if max_pack_multiple is not None
+                    else None
+                )
+
+                if purchasable:
                     status = "buyable"
-                    max_pack_g = (
-                        target_scale_g * max_pack_multiple
-                        if max_pack_multiple is not None
-                        else None
+                    best_price = cheapest_offer_for_target(
+                        purchasable,
+                        currency=currency,
+                        target_mol_weight=nm.mol_weight,
+                        target_inchikey=nm.inchikey,
+                        offer_mol_weights=offer_mol_weights,
+                        max_pack_grams=max_pack_g,
                     )
+                    min_outlay_cost, _, moq_pack_g = min_outlay_for_offers(
+                        purchasable,
+                        currency=currency,
+                        required_grams=target_scale_g,
+                        target_mol_weight=nm.mol_weight,
+                        target_inchikey=nm.inchikey,
+                        offer_mol_weights=offer_mol_weights,
+                    )
+                    lead_time_days = _min_offer_lead_days(purchasable)
+                    est_cost = None
+                    cost_complete = False
+                    n_steps = 0
+                    vendors_preview = ", ".join(dict.fromkeys(o.vendor for o in purchasable[:3]))
+                    suffix = (
+                        f" (+{len(purchasable) - 3} more offers)" if len(purchasable) > 3 else ""
+                    )
+                    reasons.append(
+                        f"listed by {len(purchasable)} catalog offer(s): {vendors_preview}{suffix}"
+                    )
+                    if len(purchasable) < len(offers):
+                        oos_vendors = ", ".join(
+                            dict.fromkeys(o.vendor for o in offers if o.in_stock is False)
+                        )
+                        reasons.append(
+                            f"ignored {len(offers) - len(purchasable)} offer(s) explicitly "
+                            f"flagged out of stock: {oos_vendors}"
+                        )
+                    if best_price is None:
+                        reasons.append(
+                            "listed price unknown (source does not publish open catalog prices)"
+                        )
+                    else:
+                        reasons.append(
+                            f"cheapest listed price: {best_price.raw_unit_str or best_price.value}"
+                        )
+                elif all_offers_oos:
+                    status = "unknown"
                     best_price = cheapest_offer_for_target(
                         offers,
                         currency=currency,
@@ -484,30 +544,19 @@ def evaluate_candidates(
                         offer_mol_weights=offer_mol_weights,
                         max_pack_grams=max_pack_g,
                     )
-                    min_outlay_cost, _, moq_pack_g = min_outlay_for_offers(
-                        offers,
-                        currency=currency,
-                        required_grams=target_scale_g,
-                        target_mol_weight=nm.mol_weight,
-                        target_inchikey=nm.inchikey,
-                        offer_mol_weights=offer_mol_weights,
-                    )
-                    lead_time_days = _min_offer_lead_days(offers)
                     est_cost = None
                     cost_complete = False
-                    n_steps = 0
-                    vendors_preview = ", ".join(dict.fromkeys(o.vendor for o in offers[:3]))
-                    suffix = f" (+{len(offers) - 3} more offers)" if len(offers) > 3 else ""
+                    n_steps = None
+                    lead_time_days = None
+                    oos_vendors = ", ".join(dict.fromkeys(o.vendor for o in offers))
                     reasons.append(
-                        f"listed by {len(offers)} catalog offer(s): {vendors_preview}{suffix}"
+                        f"listed by {len(offers)} catalog offer(s) ({oos_vendors}), all explicitly "
+                        "flagged out of stock (in_stock=False)"
                     )
-                    if best_price is None:
+                    if best_price is not None:
                         reasons.append(
-                            "listed price unknown (source does not publish open catalog prices)"
-                        )
-                    else:
-                        reasons.append(
-                            f"cheapest listed price: {best_price.raw_unit_str or best_price.value}"
+                            "out-of-stock listed price retained as evidence: "
+                            f"{best_price.raw_unit_str or best_price.value}"
                         )
                 else:
                     route_target = parent_nm if parent_nm is not None else nm
@@ -649,6 +698,7 @@ def evaluate_candidates(
                     min_outlay_cost=min_outlay_cost,
                     step_yield_assumed=default_step_yield,
                     cost_complete=cost_complete,
+                    all_offers_out_of_stock=all_offers_oos,
                     lead_time_days=lead_time_days,
                     moq_pack_g=moq_pack_g,
                     precursor_smiles=precursor_smiles,
@@ -710,8 +760,10 @@ def evaluate_candidates(
                     est_cost=entry.est_cost,
                     est_cost_yield_adjusted=entry.est_cost_yield_adjusted,
                     min_outlay_cost=entry.min_outlay_cost,
+                    target_scale_g=target_scale_g,
                     step_yield_assumed=entry.step_yield_assumed,
                     cost_complete=entry.cost_complete,
+                    all_offers_out_of_stock=entry.all_offers_out_of_stock,
                     lead_time_days=entry.lead_time_days,
                     moq_pack_g=entry.moq_pack_g,
                     precursor_smiles=list(entry.precursor_smiles),
@@ -761,13 +813,40 @@ def filter_decisions_from_ranked(
     *,
     budget: Optional[float] = None,
     budget_currency: str = "USD",
-    require_complete_cost: bool = False,
+    require_complete_cost: Optional[bool] = None,
     allow_raw_pack_budget: bool = False,
     max_outlay_budget: Optional[float] = None,
     enforce_moq_outlay: bool = False,
+    target_scale_g: Optional[float] = None,
     use_yield_adjusted_cost: bool = False,
 ) -> FilterSummary:
-    """Apply unit/currency-aware budget, yield-basis, and discrete MOQ outlay gating to ranked results."""
+    """Apply unit/currency-aware budget, yield-basis, and discrete MOQ outlay gating to ranked results.
+
+    - When `require_complete_cost is None` (the default), `require_complete_cost` defaults to
+      `True` whenever a numeric `budget` or `max_outlay_budget` is active, matching
+      `BuyOrMakeLean.unpriced_never_passes_budget` (pass `require_complete_cost=False` explicitly
+      to opt out and admit unpriced/partial-cost candidates under an active budget).
+    - Both `buyable` and `makeable` per-gram cost comparisons require `<budget_currency>/g`
+      (e.g. `USD/g`); raw pack units on `buyable` rows require `allow_raw_pack_budget=True`, and
+      incompatible units on `makeable` rows reject with `price_status="incompatible_unit"`.
+    - When `enforce_moq_outlay=True` and `max_outlay_budget is None`, the discrete pack cash-outlay
+      ceiling is derived from per-gram `budget * target_scale_g` (using explicit `target_scale_g`
+      when supplied, else `RankResult.target_scale_g`).
+    """
+    if target_scale_g is not None and (
+        isinstance(target_scale_g, bool)
+        or not math.isfinite(target_scale_g)
+        or target_scale_g <= 0.0
+    ):
+        raise ValueError("target_scale_g must be a finite number > 0 when provided")
+
+    eff_require_complete = (
+        (budget is not None or max_outlay_budget is not None)
+        if require_complete_cost is None
+        else bool(require_complete_cost)
+    )
+
+    ranked_list = list(ranked)
     kept: list[RankResult] = []
     over_budget_list: list[RankResult] = []
     rejected: list[RankResult] = []
@@ -775,19 +854,30 @@ def filter_decisions_from_ranked(
 
     per_g_unit = f"{budget_currency}/g"
     buyable_allowed_units = {per_g_unit, budget_currency} if allow_raw_pack_budget else {per_g_unit}
-    makeable_allowed_units = {budget_currency, per_g_unit}
-    eff_outlay_limit = (
-        max_outlay_budget
-        if max_outlay_budget is not None
-        else (budget if enforce_moq_outlay else None)
-    )
+    makeable_allowed_units = {per_g_unit}
 
-    for res in ranked:
+    summary_outlay_limits: list[float] = []
+
+    for res in ranked_list:
         reasons = list(res.reasons)
         is_actionable = res.status in {"buyable", "makeable"}
         is_over_budget = False
         price_status: PriceStatusLiteral = "not_applicable"
         keep = is_actionable
+
+        row_scale_g = float(target_scale_g) if target_scale_g is not None else float(res.target_scale_g)
+        if max_outlay_budget is not None:
+            eff_outlay_limit: Optional[float] = float(max_outlay_budget)
+            outlay_is_derived = False
+        elif enforce_moq_outlay and budget is not None:
+            eff_outlay_limit = round(float(budget) * row_scale_g, 8)
+            outlay_is_derived = True
+        else:
+            eff_outlay_limit = None
+            outlay_is_derived = False
+
+        if eff_outlay_limit is not None:
+            summary_outlay_limits.append(round(eff_outlay_limit, 4))
 
         if is_actionable and budget is not None:
             if res.status == "buyable":
@@ -806,7 +896,7 @@ def filter_decisions_from_ranked(
                 reasons.append(
                     f"missing_price: listed price is null; cannot verify <= {budget} {per_g_unit}"
                 )
-                if require_complete_cost:
+                if eff_require_complete:
                     keep = False
                     reasons.append("rejected: require_complete_cost=True and price is missing")
             elif relevant_cost.unit not in allowed_units:
@@ -834,14 +924,14 @@ def filter_decisions_from_ranked(
                         f"incomplete_cost: partial route cost {relevant_cost.value} {relevant_cost.unit} "
                         f"<= budget {budget} {per_g_unit}, but unpriced leaves remain"
                     )
-                    if require_complete_cost:
+                    if eff_require_complete:
                         keep = False
                         reasons.append(
                             "rejected: require_complete_cost=True and route cost is incomplete"
                         )
                 elif (
                     res.status == "makeable"
-                    and require_complete_cost
+                    and eff_require_complete
                     and res.step_yield_assumed >= 1.0
                     and not use_yield_adjusted_cost
                 ):
@@ -854,13 +944,19 @@ def filter_decisions_from_ranked(
 
         if keep and is_actionable and eff_outlay_limit is not None:
             outlay = res.min_outlay_cost
+            limit_disp = round(eff_outlay_limit, 4)
+            derived_note = (
+                f" (derived from per-gram budget * target_scale_g = {budget} {per_g_unit} * {row_scale_g:g} g)"
+                if outlay_is_derived
+                else ""
+            )
             if outlay is None or outlay.value is None:
-                if require_complete_cost:
+                if eff_require_complete:
                     keep = False
                     price_status = "missing"
                     reasons.append(
                         f"missing_moq_outlay: discrete pack cash outlay unknown; "
-                        f"cannot verify <= {eff_outlay_limit} {budget_currency}"
+                        f"cannot verify <= {limit_disp} {budget_currency}{derived_note}"
                     )
             elif outlay.unit != budget_currency:
                 keep = False
@@ -873,7 +969,7 @@ def filter_decisions_from_ranked(
                 is_over_budget = True
                 reasons.append(
                     f"over_budget_moq_outlay: discrete pack cash outlay {outlay.value} {outlay.unit} "
-                    f"> outlay budget {eff_outlay_limit} {budget_currency}"
+                    f"> outlay budget {limit_disp} {budget_currency}{derived_note}"
                 )
 
         if keep:
@@ -896,11 +992,23 @@ def filter_decisions_from_ranked(
             )
         )
 
+    if max_outlay_budget is not None:
+        summary_max_outlay: Optional[float] = float(max_outlay_budget)
+    elif enforce_moq_outlay and budget is not None:
+        if target_scale_g is not None:
+            summary_max_outlay = round(float(budget) * float(target_scale_g), 4)
+        elif summary_outlay_limits and len(set(summary_outlay_limits)) == 1:
+            summary_max_outlay = summary_outlay_limits[0]
+        else:
+            summary_max_outlay = round(float(budget), 4)
+    else:
+        summary_max_outlay = None
+
     return FilterSummary(
         budget=budget,
         budget_currency=budget_currency,
-        require_complete_cost=require_complete_cost,
-        max_outlay_budget=eff_outlay_limit,
+        require_complete_cost=eff_require_complete,
+        max_outlay_budget=summary_max_outlay,
         use_yield_adjusted_cost=use_yield_adjusted_cost,
         kept=kept,
         over_budget=over_budget_list,
@@ -915,7 +1023,7 @@ def filter_proposals(
     budget: Optional[float] = None,
     *,
     budget_currency: str = "USD",
-    require_complete_cost: bool = False,
+    require_complete_cost: Optional[bool] = None,
     allow_raw_pack_budget: bool = False,
     max_outlay_budget: Optional[float] = None,
     enforce_moq_outlay: bool = False,
@@ -924,6 +1032,7 @@ def filter_proposals(
 ) -> FilterSummary:
     """Filter co-scientist proposals: keep buyable/makeable within budget, enforcing unit & completeness policy."""
     kwargs.setdefault("currency", budget_currency)
+    scale_kw = kwargs.get("target_scale_g")
     ranked = cost_aware_rank(proposals, max_steps=max_steps, **kwargs)
     return filter_decisions_from_ranked(
         ranked,
@@ -933,5 +1042,6 @@ def filter_proposals(
         allow_raw_pack_budget=allow_raw_pack_budget,
         max_outlay_budget=max_outlay_budget,
         enforce_moq_outlay=enforce_moq_outlay,
+        target_scale_g=scale_kw,
         use_yield_adjusted_cost=use_yield_adjusted_cost,
     )

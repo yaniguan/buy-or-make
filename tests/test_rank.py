@@ -468,3 +468,235 @@ def test_mesoionic_zwitterion_desalting_never_raises_kekulize_exception_and_data
     af_demo = recs_demo[0].to_assayfold_record()
     assert af_demo.origin == "synthetic_demo"
     assert "data_source:synthetic_reference_catalog" in af_demo.tags
+
+
+def test_out_of_stock_mixed_and_unknown_stock_flags(tmp_path: Path) -> None:
+    """Issue #36: explicit in_stock=False offers never count as buyable; mixed and None preserved."""
+    import pytest
+
+    from buyormake import build_labshift_release_map, to_procurement_constraint
+
+    # 1. All offers explicitly out of stock (in_stock=false, 999 USD/g)
+    oos_tsv = tmp_path / "oos.tsv"
+    oos_tsv.write_text(
+        "smiles\tvendor\tcatalog_id\tpack_value\tpack_unit\tprice\tcurrency\tlead_time_days\tin_stock\tsource_id\tsource_url\tlicense\n"
+        "CC(=O)Oc1ccccc1C(=O)O\tBackorderChem\tBO-1\t1.0\tg\t999.0\tUSD\t\tfalse\tlocal_stock\thttps://ex/bo1\tCC0-1.0\n",
+        encoding="utf-8",
+    )
+    ranked_oos, recs_oos = evaluate_candidates(
+        ["CC(=O)Oc1ccccc1C(=O)O"],
+        backends=("local_stock",),
+        offline=True,
+        stock_paths=[oos_tsv],
+        cache_path=tmp_path / "c_oos.sqlite",
+        reaction_db_path=tmp_path / "no.sqlite",
+        scscore_weights=tmp_path / "no.gz",
+    )
+    res_oos = ranked_oos[0]
+    assert res_oos.status == "unknown"
+    assert res_oos.all_offers_out_of_stock is True
+    assert res_oos.best_price is not None
+    assert res_oos.best_price.value == pytest.approx(999.0)
+    assert res_oos.best_price.unit == "USD/g"
+    assert res_oos.lead_time_days is None
+    assert any("BackorderChem" in r and "flagged out of stock" in r for r in res_oos.reasons)
+    assert not any("unlisted" in r for r in res_oos.reasons)
+    assert len(recs_oos[0].offers) == 1
+    af_oos = recs_oos[0].to_assayfold_record()
+    assert "status:unknown" in af_oos.tags
+    assert "status:buyable" not in af_oos.tags
+
+    c_oos = to_procurement_constraint(recs_oos[0])
+    assert c_oos.status == "unknown"
+    assert c_oos.schedulable is False
+    assert c_oos.release_time_minutes is None
+    assert any("flagged out of stock" in n for n in c_oos.notes)
+    assert not any("unlisted" in n for n in c_oos.notes)
+    assert build_labshift_release_map(recs_oos) == {}
+
+    # 2. Mixed case: one out-of-stock offer ($1/g, 1d) + one in-stock offer ($12/g, 4d) -> buyable using in-stock offer
+    mixed_tsv = tmp_path / "mixed.tsv"
+    mixed_tsv.write_text(
+        "smiles\tvendor\tcatalog_id\tpack_value\tpack_unit\tprice\tcurrency\tlead_time_days\tin_stock\tsource_id\tsource_url\tlicense\n"
+        "CC(=O)Nc1ccc(O)cc1\tOutOfStockVendor\tOOS-1\t1.0\tg\t1.0\tUSD\t1\tfalse\tlocal_stock\thttps://ex/oos\tCC0-1.0\n"
+        "CC(=O)Nc1ccc(O)cc1\tInStockVendor\tIS-2\t1.0\tg\t12.0\tUSD\t4\ttrue\tlocal_stock\thttps://ex/is\tCC0-1.0\n",
+        encoding="utf-8",
+    )
+    ranked_mix, recs_mix = evaluate_candidates(
+        ["CC(=O)Nc1ccc(O)cc1"],
+        backends=("local_stock",),
+        offline=True,
+        stock_paths=[mixed_tsv],
+        cache_path=tmp_path / "c_mix.sqlite",
+        reaction_db_path=tmp_path / "no.sqlite",
+        scscore_weights=tmp_path / "no.gz",
+    )
+    res_mix = ranked_mix[0]
+    assert res_mix.status == "buyable"
+    assert res_mix.all_offers_out_of_stock is False
+    assert res_mix.best_price is not None and res_mix.best_price.value == pytest.approx(12.0)
+    assert res_mix.lead_time_days == 4
+    c_mix = to_procurement_constraint(recs_mix[0])
+    assert c_mix.schedulable is True
+    assert c_mix.lead_time_days == 4
+    assert c_mix.release_time_minutes == 4 * 1440
+
+    # 3. Unknown stock flag (in_stock=None) keeps today's buyable behavior
+    none_tsv = tmp_path / "none_flag.tsv"
+    none_tsv.write_text(
+        "smiles\tvendor\tcatalog_id\tpack_value\tpack_unit\tprice\tcurrency\tlead_time_days\tin_stock\tsource_id\tsource_url\tlicense\n"
+        "CCO\tFreeRegistryVendor\tFR-1\t1.0\tg\t3.5\tUSD\t2\t\tlocal_stock\thttps://ex/fr1\tCC0-1.0\n",
+        encoding="utf-8",
+    )
+    ranked_none, recs_none = evaluate_candidates(
+        ["CCO"],
+        backends=("local_stock",),
+        offline=True,
+        stock_paths=[none_tsv],
+        cache_path=tmp_path / "c_none.sqlite",
+        reaction_db_path=tmp_path / "no.sqlite",
+        scscore_weights=tmp_path / "no.gz",
+    )
+    assert ranked_none[0].status == "buyable"
+    assert ranked_none[0].all_offers_out_of_stock is False
+    assert recs_none[0].offers[0].in_stock is None
+    assert build_labshift_release_map(recs_none) == {"LFQSCWFLJHTTHZ-UHFFFAOYSA-N": 2 * 1440}
+
+
+def test_moq_outlay_scaling_by_target_scale_g_and_makeable_unit_gate(tmp_path: Path) -> None:
+    """Issue #37: per-gram budget scales by target_scale_g for MOQ outlay; makeable checks USD/g unit."""
+    import pytest
+
+    from buyormake.rank import filter_decisions_from_ranked
+    from buyormake.schema import Quantity, RankResult
+
+    bb_tsv = tmp_path / "bb_scale.tsv"
+    bb_tsv.write_text(
+        "smiles\tvendor\tcatalog_id\tpack_value\tpack_unit\tprice\tcurrency\tin_stock\tsource_id\tsource_url\tlicense\n"
+        "O=C(O)c1ccccc1\tChemV\tBZA-1G\t1.0\tg\t3.0\tUSD\ttrue\tlocal_stock\thttps://ex/bza\tCC0-1.0\n"
+        "Nc1ccccc1\tChemV\tANI-1G\t1.0\tg\t3.0\tUSD\ttrue\tlocal_stock\thttps://ex/ani\tCC0-1.0\n",
+        encoding="utf-8",
+    )
+    target = "O=C(Nc1ccccc1)c1ccccc1"
+
+    # At target_scale_g=1.0: est_cost = 3.274 USD/g, min_outlay_cost = 6.0 USD <= 25.0 * 1.0 USD -> kept
+    s_1g = filter_proposals(
+        [target],
+        max_steps=1,
+        budget=25.0,
+        enforce_moq_outlay=True,
+        target_scale_g=1.0,
+        backends=("local_stock",),
+        route_backend="template",
+        offline=True,
+        stock_paths=[bb_tsv],
+        cache_path=tmp_path / "c_1g.sqlite",
+        reaction_db_path=tmp_path / "no.sqlite",
+        scscore_weights=tmp_path / "no.gz",
+    )
+    assert len(s_1g.kept) == 1
+    assert s_1g.kept[0].est_cost is not None and s_1g.kept[0].est_cost.unit == "USD/g"
+    assert s_1g.kept[0].min_outlay_cost is not None and s_1g.kept[0].min_outlay_cost.unit == "USD"
+    assert s_1g.kept[0].min_outlay_cost.value == pytest.approx(6.0)
+
+    # At target_scale_g=10.0: est_cost stays 3.274 USD/g, min_outlay_cost = 36.0 USD <= 25.0 * 10 = 250 USD -> KEPT!
+    ranked_10g, _ = evaluate_candidates(
+        [target],
+        max_steps=1,
+        target_scale_g=10.0,
+        backends=("local_stock",),
+        route_backend="template",
+        offline=True,
+        stock_paths=[bb_tsv],
+        cache_path=tmp_path / "c_10g.sqlite",
+        reaction_db_path=tmp_path / "no.sqlite",
+        scscore_weights=tmp_path / "no.gz",
+    )
+    assert ranked_10g[0].target_scale_g == pytest.approx(10.0)
+    assert ranked_10g[0].est_cost is not None and ranked_10g[0].est_cost.value == pytest.approx(
+        s_1g.kept[0].est_cost.value
+    )
+    assert ranked_10g[0].min_outlay_cost is not None and ranked_10g[0].min_outlay_cost.value == pytest.approx(36.0)
+
+    dec_10g_kept = filter_decisions_from_ranked(
+        ranked_10g,
+        budget=25.0,
+        enforce_moq_outlay=True,
+    )
+    assert len(dec_10g_kept.kept) == 1
+    assert dec_10g_kept.max_outlay_budget == pytest.approx(250.0)
+
+    # Explicit max_outlay_budget=25.0 USD genuinely rejects the 36.0 USD cash outlay
+    dec_10g_explicit_cap = filter_decisions_from_ranked(
+        ranked_10g,
+        budget=25.0,
+        max_outlay_budget=25.0,
+        enforce_moq_outlay=True,
+    )
+    assert dec_10g_explicit_cap.decisions[0].keep is False
+    assert dec_10g_explicit_cap.decisions[0].over_budget is True
+    assert any("over_budget_moq_outlay" in r for r in dec_10g_explicit_cap.decisions[0].reasons)
+
+    # Makeable row with bare "USD" or "EUR/g" unit is rejected with price_status="incompatible_unit"
+    rr_bare_usd = RankResult(
+        candidate=target,
+        status="makeable",
+        n_steps=1,
+        est_cost=Quantity(value=3.18, unit="USD"),
+        cost_complete=True,
+    )
+    rr_eur_g = RankResult(
+        candidate=target,
+        status="makeable",
+        n_steps=1,
+        est_cost=Quantity(value=3.18, unit="EUR/g"),
+        cost_complete=True,
+    )
+    unit_check = filter_decisions_from_ranked([rr_bare_usd, rr_eur_g], budget=25.0, budget_currency="USD")
+    assert all(d.keep is False for d in unit_check.decisions)
+    assert all(d.over_budget is False for d in unit_check.decisions)
+    assert all(d.price_status == "incompatible_unit" for d in unit_check.decisions)
+
+
+def test_default_budget_gate_rejects_unpriced_candidates_matching_lean_proof(
+    tmp_path: Path,
+) -> None:
+    """Issue #38: default filter_decisions_from_ranked(..., budget=25.0) rejects null/incomplete costs."""
+    from buyormake.rank import filter_decisions_from_ranked
+
+    unpriced_tsv = tmp_path / "unpriced_aspirin.tsv"
+    unpriced_tsv.write_text(
+        "smiles\tvendor\tcatalog_id\tpack_value\tpack_unit\tprice\tcurrency\tsource_id\tsource_url\tlicense\n"
+        "CC(=O)Oc1ccccc1C(=O)O\tFreeCatalog\tASP-NULL\t\t\t\t\tlocal_stock\thttps://ex/asp\tCC0-1.0\n",
+        encoding="utf-8",
+    )
+    ranked, _ = evaluate_candidates(
+        ["CC(=O)Oc1ccccc1C(=O)O"],
+        backends=("local_stock",),
+        offline=True,
+        stock_paths=[unpriced_tsv],
+        cache_path=tmp_path / "c_unp.sqlite",
+        reaction_db_path=tmp_path / "no.sqlite",
+        scscore_weights=tmp_path / "no.gz",
+    )
+    assert ranked[0].status == "buyable"
+    assert ranked[0].best_price is None
+
+    # Default under active budget: rejected with price_status="missing" (matches unpriced_never_passes_budget)
+    default_bud = filter_decisions_from_ranked(ranked, budget=25.0, budget_currency="USD")
+    assert default_bud.require_complete_cost is True
+    assert default_bud.decisions[0].keep is False
+    assert default_bud.decisions[0].price_status == "missing"
+
+    # Explicit opt-out require_complete_cost=False still admits when requested
+    permissive = filter_decisions_from_ranked(
+        ranked, budget=25.0, budget_currency="USD", require_complete_cost=False
+    )
+    assert permissive.require_complete_cost is False
+    assert permissive.decisions[0].keep is True
+    assert permissive.decisions[0].price_status == "missing"
+
+    # No active budget (budget=None): kept by default
+    no_bud = filter_decisions_from_ranked(ranked, budget=None)
+    assert no_bud.require_complete_cost is False
+    assert no_bud.decisions[0].keep is True

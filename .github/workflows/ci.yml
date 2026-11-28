@@ -54,5 +54,5 @@ jobs:
       - name: Build BuyOrMakeLean
         working-directory: lean
         run: lake build
-      - name: Verify #print axioms and >=100-case Python differential parity
+      - name: Verify #print axioms and >=170-case Python differential parity
         run: python scripts/check_lean_axioms_and_parity.py

@@ -34,7 +34,7 @@ def test_lean_source_has_zero_sorry_and_zero_custom_axioms() -> None:
     assert "no custom axioms" in lean_readme.lower()
 
 
-def test_lean_lake_build_axioms_and_120_case_differential_parity() -> None:
+def test_lean_lake_build_axioms_and_170_case_differential_parity() -> None:
     mod = _load_parity_module()
     if mod.find_lake_executable() is None:
         pytest.skip("Lean 4 `lake` toolchain not installed in this environment")
@@ -43,7 +43,14 @@ def test_lean_lake_build_axioms_and_120_case_differential_parity() -> None:
     assert summary["custom_axioms"] == 0
     assert summary["sorry_count"] == 0
     assert summary["mismatches"] == 0
-    assert summary["differential_cases_total"] >= 120
+    assert summary["differential_cases_total"] >= 170
+    assert summary["suite_counts"]["shipping_gate"] >= 35
+    assert summary["cases_against_shipping_code"] >= 80
+    assert summary["cases_against_mirror"] >= 80
+    assert (
+        summary["cases_against_shipping_code"] + summary["cases_against_mirror"]
+        == summary["differential_cases_total"]
+    )
     assert set(summary["axioms_used_union"]).issubset(
         {"propext", "Classical.choice", "Quot.sound"}
     )

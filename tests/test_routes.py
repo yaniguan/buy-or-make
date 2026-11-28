@@ -324,3 +324,35 @@ def test_retro_templates_guard_tertiary_sn2_competing_nucleophiles_and_ab_suzuki
         "Brc1ccccc1",
         "OB(O)c1ccc(F)cc1",
     } in f_biphenyl_sets
+
+
+def test_route_whose_leaves_are_out_of_stock_is_not_makeable(tmp_path: Path) -> None:
+    """Issue #36: a route whose leaf offers are all in_stock=false must NOT be reported makeable."""
+    from buyormake import evaluate_candidates
+
+    oos_leaves_tsv = tmp_path / "oos_leaves.tsv"
+    oos_leaves_tsv.write_text(
+        "smiles\tvendor\tcatalog_id\tpack_value\tpack_unit\tprice\tcurrency\tlead_time_days\tin_stock\tsource_id\tsource_url\tlicense\n"
+        "O=C(O)c1ccccc1\tVendorOOS\tBZA-OOS\t1.0\tg\t2.0\tUSD\t2\tfalse\tlocal_stock\thttps://ex/bza\tCC0-1.0\n"
+        "Nc1ccccc1\tVendorOOS\tANI-OOS\t1.0\tg\t3.0\tUSD\t2\tfalse\tlocal_stock\thttps://ex/ani\tCC0-1.0\n",
+        encoding="utf-8",
+    )
+    ranked, records = evaluate_candidates(
+        ["O=C(Nc1ccccc1)c1ccccc1"],
+        max_steps=2,
+        backends=("local_stock",),
+        route_backend="template",
+        offline=True,
+        stock_paths=[oos_leaves_tsv],
+        cache_path=tmp_path / "c_oos_rt.sqlite",
+        reaction_db_path=tmp_path / "no.sqlite",
+        scscore_weights=tmp_path / "no.gz",
+    )
+    assert ranked[0].status == "unknown"
+    assert ranked[0].cost_complete is False
+    assert ranked[0].est_cost is None
+    assert records[0].routes
+    for r in records[0].routes:
+        assert not all(r.leaves_purchasable)
+        assert r.est_cost is None
+        assert r.est_cost_complete is False

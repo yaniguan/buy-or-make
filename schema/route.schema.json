@@ -180,7 +180,8 @@
           "type": "null"
         }
       ],
-      "default": null
+      "default": null,
+      "description": "Estimated stoichiometric leaf-only cost per 1 g of target in '<currency>/g' (e.g. 'USD/g'), independent of target_scale_g."
     },
     "est_cost_complete": {
       "title": "Est Cost Complete",
@@ -199,7 +200,8 @@
           "type": "null"
         }
       ],
-      "default": null
+      "default": null,
+      "description": "Step-depth yield-compounded leaf-only cost per 1 g of target in '<currency>/g' (e.g. 'USD/g')."
     },
     "leaves": {
       "items": {
@@ -228,7 +230,8 @@
           "type": "null"
         }
       ],
-      "default": null
+      "default": null,
+      "description": "Minimum discrete pack MOQ cash outlay for the full target_scale_g order in absolute '<currency>' (e.g. 'USD')."
     },
     "n_steps": {
       "title": "N Steps",

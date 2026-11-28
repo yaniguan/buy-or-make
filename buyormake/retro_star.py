@@ -20,6 +20,7 @@ from .cost import (
     compute_leaf_depths,
     estimate_route_cost_bounds,
     offer_pack_grams,
+    purchasable_offers,
     route_cost_method,
 )
 from .routes import (
@@ -177,6 +178,202 @@ EXTENDED_RETRO_STAR_TEMPLATES: list[tuple[str, str]] = [
         "snar_activated_aryl_f_tertiary",
         "[c;$(c1ccc([N+](=O)[O-])cc1),$(c1ccc(C#N)cc1),$(c1ccccn1),$(c1ncccn1):1]!@[N:2]([#6:3])[#6:4]>>[c:1]F.[NH1:2]([#6:3])[#6:4]",
     ),
+    (
+        "suzuki_aryl_alkenyl_cl",
+        "[c:1]-!@[CX3:2]=[CX3:3]>>[c:1]Cl.[CX3:2](B(O)O)=[CX3:3]",
+    ),
+    (
+        "suzuki_benzylic_br",
+        "[c:1]-!@[CH2:2][c:3]>>[c:1]B(O)O.[c:3][CH2:2]Br",
+    ),
+    (
+        "suzuki_sp2_sp3_cyclopropyl",
+        "[c:1]-!@[CH1;r3:2]>>[c:1]Br.[CH1:2]B(O)O",
+    ),
+    (
+        "buchwald_hartwig_cn_alkyl_sec_br",
+        "[c:1]!@[NH1;!$(NC=[O,S]);!$(NS(=O)=O):2][CX4:3]>>[c:1]Br.[NH2:2][CX4:3]",
+    ),
+    (
+        "buchwald_hartwig_cn_alkyl_sec_cl",
+        "[c:1]!@[NH1;!$(NC=[O,S]);!$(NS(=O)=O):2][CX4:3]>>[c:1]Cl.[NH2:2][CX4:3]",
+    ),
+    (
+        "buchwald_hartwig_cn_tertiary_cl",
+        "[c:1]!@[N+0;H0;!$(NC=[O,S]);!$(NS(=O)=O);!$([N+](=O)[O-]):2]([#6:3])[#6:4]>>[c:1]Cl.[NH1:2]([#6:3])[#6:4]",
+    ),
+    (
+        "buchwald_hartwig_n_heterocycle_br",
+        "[c:1]-!@[n+0;H0;r5:2]>>[c:1]Br.[nH1:2]",
+    ),
+    (
+        "buchwald_hartwig_n_heterocycle_cl",
+        "[c:1]-!@[n+0;H0;r5:2]>>[c:1]Cl.[nH1:2]",
+    ),
+    (
+        "sonogashira_internal_alkyne_br",
+        "[c:1]-!@[C:2]#[C:3][#6:4]>>[c:1]Br.[CH1:2]#[C:3][#6:4]",
+    ),
+    (
+        "sonogashira_internal_alkyne_i",
+        "[c:1]-!@[C:2]#[C:3][#6:4]>>[c:1]I.[CH1:2]#[C:3][#6:4]",
+    ),
+    (
+        "ullmann_diaryl_ether_br",
+        "[c:1][O:2]!@[c:3]>>[c:1][OH1:2].[c:3]Br",
+    ),
+    (
+        "heck_alkenyl_aryl_br",
+        "[c:1]-!@[CH1:2]=[CH1:3][#6:4]>>[c:1]Br.[CH2:2]=[CH1:3][#6:4]",
+    ),
+    (
+        "snar_azine_cl_amine_sec",
+        "[c;$(c(:n):n),$(c(:n):c:n),$(c1ccccn1),$(c1ccc2ncncc2c1):1]!@[NH1;!$(NC=[O,S]):2][#6:3]>>[c:1]Cl.[NH2:2][#6:3]",
+    ),
+    (
+        "snar_azine_cl_amine_tert",
+        "[c;$(c(:n):n),$(c(:n):c:n),$(c1ccccn1),$(c1ccc2ncncc2c1):1]!@[N+0;H0;!$(NC=[O,S]);!$([N+](=O)[O-]):2]([#6:3])[#6:4]>>[c:1]Cl.[NH1:2]([#6:3])[#6:4]",
+    ),
+    (
+        "snar_azine_cl_ether",
+        "[c;$(c(:n):n),$(c(:n):c:n),$(c1ccccn1):1]!@[O:2][#6:3]>>[c:1]Cl.[OH1:2][#6:3]",
+    ),
+    (
+        "snar_activated_aryl_f_ether",
+        "[c;$(c1ccc([N+](=O)[O-])cc1),$(c1ccc(C#N)cc1),$(c1ccccn1),$(c1ncccn1):1]!@[O:2][#6:3]>>[c:1]F.[OH1:2][#6:3]",
+    ),
+    (
+        "snar_azine_cl_thioether",
+        "[c;$(c(:n):n),$(c(:n):c:n),$(c1ccccn1):1]!@[SX2:2][#6:3]>>[c:1]Cl.[SH1:2][#6:3]",
+    ),
+    (
+        "snar_aryl_f_ortho_nitro_sec",
+        "[c;$(c1c([N+](=O)[O-])cccc1),$(c1c(C#N)cccc1):1]!@[NH1:2][#6:3]>>[c:1]F.[NH2:2][#6:3]",
+    ),
+    (
+        "urea_tertiary_isocyanate",
+        "[#6:1][NH1:2][C:3](=[O:4])!@[N+0;H0:5]([#6:6])[#6:7]>>[#6:1][N:2]=[C:3]=[O:4].[NH1:5]([#6:6])[#6:7]",
+    ),
+    (
+        "thiourea_secondary_isothiocyanate",
+        "[#6:1][NH1:2][C:3](=[S:4])!@[NH1:5][#6:6]>>[#6:1][N:2]=[C:3]=[S:4].[NH2:5][#6:6]",
+    ),
+    (
+        "chloroformate_carbamate_secondary",
+        "[#6:1][O:2][C:3](=[O:4])!@[NH1:5][#6:6]>>[#6:1][O:2][C:3](=[O:4])Cl.[NH2:5][#6:6]",
+    ),
+    (
+        "chloroformate_carbamate_tertiary",
+        "[#6:1][O:2][C:3](=[O:4])!@[N+0;H0:5]([#6:6])[#6:7]>>[#6:1][O:2][C:3](=[O:4])Cl.[NH1:5]([#6:6])[#6:7]",
+    ),
+    (
+        "esterification_acyl_cl",
+        "[#6:1][C:2](=[O:3])!@[O:4][#6:5]>>[#6:1][C:2](=[O:3])Cl.[OH1:4][#6:5]",
+    ),
+    (
+        "sulfonate_ester_formation",
+        "[#6:1][S:2](=[O:3])(=[O:4])!@[O:5][#6:6]>>[#6:1][S:2](=[O:3])(=[O:4])Cl.[OH1:5][#6:6]",
+    ),
+    (
+        "friedel_crafts_acylation_cl",
+        "[c:1]!@[C:2](=[O:3])[#6:4]>>[cH1:1].[#6:4][C:2](=[O:3])Cl",
+    ),
+    (
+        "mitsunobu_aryl_ether",
+        "[c:1][O:2]!@[CX4;H3,H2,H1;!$(C([#6])([#6])[#6]):3]>>[c:1][OH1:2].[CX4:3]O",
+    ),
+    (
+        "williamson_aryl_ether_i",
+        "[c:1][O:2]!@[CX4;H3,H2;!$(C([#6])([#6])[#6]):3]>>[c:1][OH1:2].[CX4:3]I",
+    ),
+    (
+        "n_alkylation_secondary_cl",
+        "[#6:1][NH1;!$(NC=[O,S]);!$(NS(=O)=O):2]!@[CX4;H3,H2;!$(C([#6])([#6])[#6]):3]>>[#6:1][NH2:2].[CX4:3]Cl",
+    ),
+    (
+        "n_alkylation_secondary_i",
+        "[#6:1][NH1;!$(NC=[O,S]);!$(NS(=O)=O):2]!@[CX4;H3,H2;!$(C([#6])([#6])[#6]):3]>>[#6:1][NH2:2].[CX4:3]I",
+    ),
+    (
+        "n_alkylation_tertiary_i",
+        "[N+0;H0;!a;!$(NC=[O,S]);!$(NS(=O)=O);!$([N+](=O)[O-]):1]([#6:4])([#6:5])!@[CX4;H3,H2;!$(C([#6])([#6])[#6]):2]>>[NH1:1]([#6:4])[#6:5].[CX4:2]I",
+    ),
+    (
+        "n_heterocycle_alkylation_cl",
+        "[nH0;+0;r5,r6:1]!@[CX4;H3,H2;!$(C([#6])([#6])[#6]):2]>>[nH1:1].[CX4:2]Cl",
+    ),
+    (
+        "reductive_amination_ketone_secondary",
+        "[#6:1][CH1:2]([#6:6])!@[NH1;!$(NC=[O,S]);!$(NS(=O)=O):3][#6:4]>>[#6:1][C:2](=O)[#6:6].[NH2:3][#6:4]",
+    ),
+    (
+        "reductive_amination_ketone_tertiary",
+        "[#6:1][CH1:2]([#6:6])!@[N+0;H0;!a;!$(NC=[O,S]);!$(NS(=O)=O):3]([#6:4])[#6:5]>>[#6:1][C:2](=O)[#6:6].[NH1:3]([#6:4])[#6:5]",
+    ),
+    (
+        "epoxide_opening_amine_tertiary",
+        "[#6:1][CH1:2]([OH1:3])[CH2:4]!@[N+0;H0;!a;!$(NC=[O,S]):5]([#6:6])[#6:7]>>[#6:1][CH1:2]1[O:3][CH2:4]1.[NH1:5]([#6:6])[#6:7]",
+    ),
+    (
+        "grignard_aldehyde_sec_alcohol",
+        "[#6:1][CH1:2]([OH1:3])!@[#6;c,CX4:4]>>[#6:1][CH1:2]=[O:3].[#6:4]Br",
+    ),
+    (
+        "grignard_ketone_tert_alcohol",
+        "[#6:1][C:2]([OH1:3])([#6:5])!@[#6;c,CX4:4]>>[#6:1][C:2](=[O:3])[#6:5].[#6:4]Br",
+    ),
+    (
+        "hwe_olefination_enoate",
+        "[#6:1][CH1:2]=!@[CH1:3][C:4](=[O:5])[O:6][#6:7]>>[#6:1][CH1:2]=O.CCOP(=O)(OCC)[CH2:3][C:4](=[O:5])[O:6][#6:7]",
+    ),
+    (
+        "aldol_condensation_enone",
+        "[#6:1][C:2](=[O:3])[CH1:4]=!@[CH1:5][c:6]>>[#6:1][C:2](=[O:3])[CH3:4].[c:6][CH1:5]=O",
+    ),
+    (
+        "hantzsch_thiazole",
+        "[#6:1][c:2]1[n:3][c:4]([#6:5])[cH1:6][s:7]1>>[#6:1][C:2](=S)[NH2:3].[#6:5][C:4](=O)[CH2:6]Br",
+    ),
+    (
+        "hantzsch_aminothiazole",
+        "[#6:1][NH1:8][c:2]1[n:3][c:4]([#6:5])[cH1:6][s:7]1>>[#6:1][NH1:8][C:2](=S)[NH2:3].[#6:5][C:4](=O)[CH2:6]Br",
+    ),
+    (
+        "benzimidazole_condensation_acid",
+        "[c:1]12[c:2]([nH1:3][c:4]([#6:5])[n:6]1)[c:7][c:8][c:9][c:10]2>>[c:1]1([NH2:3])[c:2]([NH2:6])[c:7][c:8][c:9][c:10]1.[#6:5][C:4](=O)O",
+    ),
+    (
+        "oxadiazole_124_amidoxime",
+        "[#6:1][c:2]1[o:7][n:3][c:4]([#6:5])[n:6]1>>[#6:5][C:4](=[N:3][OH1:7])[NH2:6].[#6:1][C:2](=O)O",
+    ),
+    (
+        "triazole_click_cuaac",
+        "[#6:1][n:2]1[cH1:3][c:4]([#6:5])[n:6][n:7]1>>[#6:1][N:2]=[N+:7]=[N-:6].[CH1:3]#[C:4][#6:5]",
+    ),
+    (
+        "aryl_boronic_acid_from_bromide",
+        "[c:1][BX3]([OH1])[OH1]>>[c:1]Br",
+    ),
+    (
+        "acid_chloride_from_carboxylic_acid",
+        "[#6:1][CX3:2](=[O:3])Cl>>[#6:1][C:2](=[O:3])O",
+    ),
+    (
+        "alkyl_bromide_from_alcohol",
+        "[CX4;H3,H2,H1;!$(C([O,N,S,F,Cl,Br,I])):1]Br>>[CX4:1]O",
+    ),
+    (
+        "isocyanate_from_primary_amine",
+        "[#6:1][NX2:2]=[CX2:3]=[OX1:4]>>[#6:1][NH2:2]",
+    ),
+    (
+        "demethylation_aryl_methyl_ether",
+        "[c:1][OH1:2]>>[c:1][O:2]C",
+    ),
+    (
+        "boc_deprotection_heteroaryl_nh",
+        "[nH1;r5,r6:1]>>[n+0:1]C(=O)OC(C)(C)C",
+    ),
 ]
 
 RETRO_STAR_TEMPLATE_DELTAS: dict[str, dict[str, int]] = {
@@ -215,7 +412,66 @@ RETRO_STAR_TEMPLATE_DELTAS: dict[str, dict[str, int]] = {
     "ester_reduction_primary_alcohol_me": {"C": 1, "O": 1},
     "snar_activated_aryl_f_secondary": {"F": 1},
     "snar_activated_aryl_f_tertiary": {"F": 1},
+    "suzuki_aryl_alkenyl_cl": {"Cl": 1, "B": 1, "O": 2},
+    "suzuki_benzylic_br": {"Br": 1, "B": 1, "O": 2},
+    "suzuki_sp2_sp3_cyclopropyl": {"Br": 1, "B": 1, "O": 2},
+    "buchwald_hartwig_cn_alkyl_sec_br": {"Br": 1},
+    "buchwald_hartwig_cn_alkyl_sec_cl": {"Cl": 1},
+    "buchwald_hartwig_cn_tertiary_cl": {"Cl": 1},
+    "buchwald_hartwig_n_heterocycle_br": {"Br": 1},
+    "buchwald_hartwig_n_heterocycle_cl": {"Cl": 1},
+    "sonogashira_internal_alkyne_br": {"Br": 1},
+    "sonogashira_internal_alkyne_i": {"I": 1},
+    "ullmann_diaryl_ether_br": {"Br": 1},
+    "heck_alkenyl_aryl_br": {"Br": 1},
+    "snar_azine_cl_amine_sec": {"Cl": 1},
+    "snar_azine_cl_amine_tert": {"Cl": 1},
+    "snar_azine_cl_ether": {"Cl": 1},
+    "snar_activated_aryl_f_ether": {"F": 1},
+    "snar_azine_cl_thioether": {"Cl": 1},
+    "snar_aryl_f_ortho_nitro_sec": {"F": 1},
+    "urea_tertiary_isocyanate": {},
+    "thiourea_secondary_isothiocyanate": {},
+    "chloroformate_carbamate_secondary": {"Cl": 1},
+    "chloroformate_carbamate_tertiary": {"Cl": 1},
+    "esterification_acyl_cl": {"Cl": 1},
+    "sulfonate_ester_formation": {"Cl": 1},
+    "friedel_crafts_acylation_cl": {"Cl": 1},
+    "mitsunobu_aryl_ether": {"O": 1},
+    "williamson_aryl_ether_i": {"I": 1},
+    "n_alkylation_secondary_cl": {"Cl": 1},
+    "n_alkylation_secondary_i": {"I": 1},
+    "n_alkylation_tertiary_i": {"I": 1},
+    "n_heterocycle_alkylation_cl": {"Cl": 1},
+    "reductive_amination_ketone_secondary": {"O": 1},
+    "reductive_amination_ketone_tertiary": {"O": 1},
+    "epoxide_opening_amine_tertiary": {},
+    "grignard_aldehyde_sec_alcohol": {"Br": 1},
+    "grignard_ketone_tert_alcohol": {"Br": 1},
+    "hwe_olefination_enoate": {"C": 4, "O": 4, "P": 1},
+    "aldol_condensation_enone": {"O": 1},
+    "hantzsch_thiazole": {"O": 1, "Br": 1},
+    "hantzsch_aminothiazole": {"O": 1, "Br": 1},
+    "benzimidazole_condensation_acid": {"O": 2},
+    "oxadiazole_124_amidoxime": {"O": 2},
+    "triazole_click_cuaac": {},
+    "aryl_boronic_acid_from_bromide": {"Br": 1, "B": -1, "O": -2},
+    "acid_chloride_from_carboxylic_acid": {"O": 1, "Cl": -1},
+    "alkyl_bromide_from_alcohol": {"O": 1, "Br": -1},
+    "isocyanate_from_primary_amine": {"C": -1, "O": -1},
+    "demethylation_aryl_methyl_ether": {"C": 1},
+    "boc_deprotection_heteroaryl_nh": {"C": 5, "O": 2},
 }
+
+RING_SYNTHESIS_RETRO_STAR_TEMPLATES: frozenset[str] = frozenset(
+    {
+        "hantzsch_thiazole",
+        "hantzsch_aminothiazole",
+        "benzimidazole_condensation_acid",
+        "oxadiazole_124_amidoxime",
+        "triazole_click_cuaac",
+    }
+)
 
 UNIMOLECULAR_RETRO_STAR_TEMPLATES: frozenset[str] = frozenset(
     {
@@ -231,10 +487,16 @@ UNIMOLECULAR_RETRO_STAR_TEMPLATES: frozenset[str] = frozenset(
         "ester_reduction_primary_alcohol_me",
         "boc_deprotection_primary_amine",
         "boc_deprotection_secondary_amine",
+        "boc_deprotection_heteroaryl_nh",
         "cbz_deprotection_primary_amine",
         "cbz_deprotection_secondary_amine",
         "bn_ether_deprotection_phenol",
         "bn_ether_deprotection_alcohol",
+        "aryl_boronic_acid_from_bromide",
+        "acid_chloride_from_carboxylic_acid",
+        "alkyl_bromide_from_alcohol",
+        "isocyanate_from_primary_amine",
+        "demethylation_aryl_methyl_ether",
     }
 )
 
@@ -248,10 +510,12 @@ _SIZE_INCREASING_FGI_TEMPLATES: frozenset[str] = frozenset(
         "ester_reduction_primary_alcohol_me",
         "boc_deprotection_primary_amine",
         "boc_deprotection_secondary_amine",
+        "boc_deprotection_heteroaryl_nh",
         "cbz_deprotection_primary_amine",
         "cbz_deprotection_secondary_amine",
         "bn_ether_deprotection_phenol",
         "bn_ether_deprotection_alcohol",
+        "demethylation_aryl_methyl_ether",
     }
 )
 
@@ -261,6 +525,8 @@ _PAT_UNPROTECTED_AMINE = Chem.MolFromSmarts(
 _PAT_UNPROTECTED_OH = Chem.MolFromSmarts(
     "[OH1;!$(OC(=[O,S]));!$(OS(=O));!$(OB);!$(OP);!$(ON)]"
 )
+_PAT_CARBOXYLIC_ACID = Chem.MolFromSmarts("[CX3](=O)[OH1]")
+_PAT_ELECTROPHILIC_CARBONYL = Chem.MolFromSmarts("[CX3](=[OX1])[#6,#1,O,Cl,Br]")
 _PAT_ARYL_HAL_ANY = Chem.MolFromSmarts("[c,CX3][Cl,Br,I]")
 _PAT_BORONIC_ACID = Chem.MolFromSmarts("[#6]B([OH])[OH]")
 
@@ -355,14 +621,33 @@ def _has_extended_chemoselectivity_conflict(tpl_name: str, frag_mols: list[Chem.
         return False
     f0, f1 = frag_mols[0], frag_mols[1]
 
-    if tpl_name in {"acyl_chloride_amide_secondary", "acyl_chloride_amide_tertiary"}:
+    if tpl_name in {
+        "acyl_chloride_amide_secondary",
+        "acyl_chloride_amide_tertiary",
+        "esterification_acyl_cl",
+        "chloroformate_carbamate_secondary",
+        "chloroformate_carbamate_tertiary",
+        "sulfonate_ester_formation",
+        "urea_tertiary_isocyanate",
+        "thiourea_secondary_isothiocyanate",
+    }:
         if f0.HasSubstructMatch(_PAT_UNPROTECTED_AMINE) or f0.HasSubstructMatch(_PAT_UNPROTECTED_OH):
             return True
         if len(f1.GetSubstructMatches(_PAT_UNPROTECTED_AMINE)) >= 2:
             return True
         return False
 
-    if tpl_name in {"suzuki_biaryl_cl", "suzuki_biaryl_i"}:
+    if tpl_name == "friedel_crafts_acylation_cl":
+        if f1.HasSubstructMatch(_PAT_UNPROTECTED_AMINE) or f1.HasSubstructMatch(_PAT_UNPROTECTED_OH):
+            return True
+        return False
+
+    if tpl_name in {
+        "suzuki_biaryl_cl",
+        "suzuki_biaryl_i",
+        "suzuki_aryl_alkenyl_cl",
+        "suzuki_sp2_sp3_cyclopropyl",
+    }:
         if f0.HasSubstructMatch(_PAT_BORONIC_ACID):
             return True
         if f1.HasSubstructMatch(_PAT_ARYL_HAL_ANY):
@@ -373,28 +658,96 @@ def _has_extended_chemoselectivity_conflict(tpl_name: str, frag_mols: list[Chem.
             return True
         return False
 
+    if tpl_name == "suzuki_benzylic_br":
+        if f1.HasSubstructMatch(_PAT_BORONIC_ACID) or f0.HasSubstructMatch(_PAT_ARYL_HAL_ANY):
+            return True
+        if len(f0.GetSubstructMatches(_PAT_BORONIC_ACID)) >= 2:
+            return True
+        return False
+
+    if tpl_name in {
+        "sonogashira_alkynyl",
+        "sonogashira_internal_alkyne_br",
+        "sonogashira_internal_alkyne_i",
+        "heck_alkenyl_aryl_br",
+    }:
+        if len(f0.GetSubstructMatches(_PAT_ARYL_HAL_ANY)) >= 2:
+            return True
+        if f1.HasSubstructMatch(_PAT_ARYL_HAL_ANY):
+            return True
+        return False
+
+    if tpl_name == "ullmann_diaryl_ether_br":
+        if f1.HasSubstructMatch(_PAT_UNPROTECTED_OH) or f1.HasSubstructMatch(_PAT_UNPROTECTED_AMINE):
+            return True
+        if len(f1.GetSubstructMatches(_PAT_ARYL_HAL_ANY)) >= 2:
+            return True
+        return False
+
     if tpl_name in {
         "buchwald_hartwig_cn_cl",
+        "buchwald_hartwig_cn_alkyl_sec_br",
+        "buchwald_hartwig_cn_alkyl_sec_cl",
+        "buchwald_hartwig_cn_tertiary_cl",
+        "buchwald_hartwig_n_heterocycle_br",
+        "buchwald_hartwig_n_heterocycle_cl",
         "snar_heteroaryl_cl_tertiary",
         "snar_heteroaryl_cl_secondary",
+        "snar_azine_cl_amine_sec",
+        "snar_azine_cl_amine_tert",
+        "snar_activated_aryl_f_secondary",
+        "snar_activated_aryl_f_tertiary",
+        "snar_aryl_f_ortho_nitro_sec",
     }:
         if f0.HasSubstructMatch(_PAT_UNPROTECTED_AMINE):
             return True
         return False
 
+    if tpl_name in {"snar_azine_cl_ether", "snar_activated_aryl_f_ether", "snar_azine_cl_thioether"}:
+        if f0.HasSubstructMatch(_PAT_UNPROTECTED_OH) or f0.HasSubstructMatch(_PAT_UNPROTECTED_AMINE):
+            return True
+        return False
+
+    if tpl_name in {"reductive_amination_ketone_secondary", "reductive_amination_ketone_tertiary"}:
+        if f0.HasSubstructMatch(_PAT_UNPROTECTED_AMINE):
+            return True
+        return False
+
+    if tpl_name in {"grignard_aldehyde_sec_alcohol", "grignard_ketone_tert_alcohol"}:
+        if (
+            f1.HasSubstructMatch(_PAT_UNPROTECTED_OH)
+            or f1.HasSubstructMatch(_PAT_UNPROTECTED_AMINE)
+            or f1.HasSubstructMatch(_PAT_CARBOXYLIC_ACID)
+            or f1.HasSubstructMatch(_PAT_ELECTROPHILIC_CARBONYL)
+        ):
+            return True
+        return False
+
+    if tpl_name == "mitsunobu_aryl_ether":
+        if f1.HasSubstructMatch(_PAT_UNPROTECTED_AMINE):
+            return True
+        if len(f1.GetSubstructMatches(_PAT_UNPROTECTED_OH)) >= 2:
+            return True
+        return False
+
     if tpl_name in {
         "n_alkylation_secondary_br",
+        "n_alkylation_secondary_cl",
+        "n_alkylation_secondary_i",
         "n_alkylation_tertiary_br",
         "n_alkylation_tertiary_cl",
+        "n_alkylation_tertiary_i",
         "n_heterocycle_alkylation_br",
+        "n_heterocycle_alkylation_cl",
         "williamson_aryl_ether_cl",
+        "williamson_aryl_ether_i",
         "thioether_alkylation_br",
     }:
         if f1.HasSubstructMatch(_PAT_UNPROTECTED_AMINE) or f1.HasSubstructMatch(_PAT_UNPROTECTED_OH):
             return True
         ring_info = f1.GetRingInfo()
         for atom in f1.GetAtoms():
-            if atom.GetAtomicNum() in {17, 35}:
+            if atom.GetAtomicNum() in {17, 35, 53}:
                 for nbr in atom.GetNeighbors():
                     if nbr.GetAtomicNum() == 6:
                         if nbr.GetTotalNumHs() == 0:
@@ -455,9 +808,9 @@ def optimize_discrete_pack_order(
     if required_grams <= 0 or not math.isfinite(required_grams):
         raise ValueError("required_grams must be a finite number > 0")
 
-    # Convert each priced mass SKU into effective target-equivalent grams `eff_pack_g`
+    # Convert each priced in-stock mass SKU into effective target-equivalent grams `eff_pack_g`
     raw_skus: list[tuple[float, float, Offer]] = []  # (eff_pack_g, price, offer)
-    for off in offers:
+    for off in purchasable_offers(offers):
         if off.price is None or off.currency != currency:
             continue
         pack_g = offer_pack_grams(off)
@@ -748,7 +1101,7 @@ class RetroStarPlanner:
         self,
         *,
         max_expansions: int = 90,
-        max_branch_per_node: int = 20,
+        max_branch_per_node: int = 28,
         post_solve_expansions: int = 18,
         top_k_routes: int = 5,
         use_extended_templates: bool = True,
@@ -843,7 +1196,13 @@ class RetroStarPlanner:
                     if is_stock_fn is not None
                     else len(reactants)
                 )
-                step_cost = tpl.base_cost + 0.04 * (max(frag_sizes) / max(parent_heavy, 1))
+                is_unstocked_unimol = (
+                    1
+                    if (tpl.name in UNIMOLECULAR_RETRO_STAR_TEMPLATES and stock_misses > 0)
+                    else 0
+                )
+                fgi_penalty = 0.26 if is_unstocked_unimol else 0.0
+                step_cost = tpl.base_cost + fgi_penalty + 0.04 * (max(frag_sizes) / max(parent_heavy, 1))
                 step = RouteStep(
                     product=canonical_smiles,
                     reactants=reactants,
@@ -851,11 +1210,21 @@ class RetroStarPlanner:
                     template_or_reference=f"{tpl.name}: {tpl.smarts}",
                     source="retro_star_smarts" if tpl.name not in RETRO_TEMPLATE_DELTAS else "template_fallback",
                 )
-                rank_key = (stock_misses, step_cost, max(frag_sizes))
+                rank_key = (stock_misses, is_unstocked_unimol, step_cost, max(frag_sizes))
                 candidates.append((rank_key, step_cost, step))
 
         candidates.sort(key=lambda item: item[0])
-        return [(c, st) for _, c, st in candidates[: self.max_branch_per_node]]
+        selected: list[tuple[float, RouteStep]] = []
+        unstocked_fgi_count = 0
+        for r_key, c, st in candidates:
+            if r_key[1] == 1:
+                if unstocked_fgi_count >= 5:
+                    continue
+                unstocked_fgi_count += 1
+            selected.append((c, st))
+            if len(selected) >= self.max_branch_per_node:
+                break
+        return selected
 
     def _compute_v0_heuristic(
         self,
@@ -1005,25 +1374,44 @@ class RetroStarPlanner:
         tb = template_backend or TemplateFallbackBackend(max_branch_per_node=self.max_branch_per_node)
 
         def _candidate_disconnections(node: _OrNode) -> list[tuple[float, RouteStep]]:
-            memo_key = f"{node.inchikey}:{'r' if node.depth == 0 else 'i'}"
+            parent_was_unimol_fgi = bool(
+                node.parent is not None and len(node.parent.step.reactants) == 1
+            )
+            can_try_unstocked_fgi = (
+                (node.depth + 1 < eff_max_steps and not parent_was_unimol_fgi)
+                or (node.depth == 0 and eff_max_steps == 1)
+            )
+            memo_key = f"{node.inchikey}:{1 if can_try_unstocked_fgi else 0}"
             if memo_key in expansion_memo:
                 return expansion_memo[memo_key]
 
-            proposals: list[tuple[float, RouteStep]] = []
+            scored_proposals: list[tuple[tuple[int, float, int], float, RouteStep]] = []
             seen_keys: set[tuple[str, ...]] = set()
 
             if use_lookup and lookup_backend is not None:
                 l_steps = lookup_backend.one_step(
-                    node.inchikey, node.smiles, limit=self.max_branch_per_node
+                    node.inchikey, node.smiles, limit=max(20, self.max_branch_per_node)
                 )
+                lookup_kept = 0
+                lookup_cap = max(10, (self.max_branch_per_node * 2) // 3)
+                ranked_l: list[tuple[int, int, RouteStep]] = []
                 for rank_idx, st in enumerate(l_steps):
                     key = tuple(sorted(st.reactants))
-                    if not key or key in seen_keys or node.smiles in st.reactants:
+                    if not key or node.smiles in st.reactants:
+                        continue
+                    misses = sum(0 if _is_in_stock(r) else 1 for r in st.reactants)
+                    ranked_l.append((misses, rank_idx, st))
+                ranked_l.sort(key=lambda t: (t[0], t[1]))
+                for misses, rank_idx, st in ranked_l:
+                    key = tuple(sorted(st.reactants))
+                    if key in seen_keys:
+                        continue
+                    if misses > 0 and lookup_kept >= lookup_cap:
                         continue
                     seen_keys.add(key)
-                    # Calibrated negative log-prior cost favoring empirical patent/ORD reactions
-                    rxn_cost = 0.72 + 0.06 * min(rank_idx, 8)
-                    proposals.append((rxn_cost, st))
+                    lookup_kept += 1
+                    rxn_cost = (0.64 if misses == 0 else 0.78) + 0.05 * min(rank_idx, 8)
+                    scored_proposals.append(((0 if misses == 0 else 1, rxn_cost, rank_idx), rxn_cost, st))
 
             if use_templates:
                 if self.use_extended_templates:
@@ -1031,23 +1419,28 @@ class RetroStarPlanner:
                         node.smiles,
                         mol=node.mol,
                         is_stock_fn=_is_in_stock,
-                        allow_unstocked_fgi=(node.depth == 0 and eff_max_steps == 1),
+                        allow_unstocked_fgi=can_try_unstocked_fgi,
                     )
-                    for step_cost, st in t_steps:
+                    for t_idx, (step_cost, st) in enumerate(t_steps):
                         key = tuple(sorted(st.reactants))
                         if key in seen_keys:
                             continue
                         seen_keys.add(key)
-                        proposals.append((step_cost, st))
+                        misses = sum(0 if _is_in_stock(r) else 1 for r in st.reactants)
+                        tier = 0 if misses == 0 else (2 if len(st.reactants) == 1 else 1)
+                        scored_proposals.append(((tier, step_cost, 100 + t_idx), step_cost, st))
                 else:
                     for rank_idx, st in enumerate(tb.one_step(node.smiles, mol=node.mol)):
                         key = tuple(sorted(st.reactants))
                         if key in seen_keys:
                             continue
                         seen_keys.add(key)
-                        proposals.append((1.15 + 0.05 * rank_idx, st))
+                        misses = sum(0 if _is_in_stock(r) else 1 for r in st.reactants)
+                        c_val = 1.15 + 0.05 * rank_idx
+                        scored_proposals.append(((0 if misses == 0 else 1, c_val, 100 + rank_idx), c_val, st))
 
-            proposals = proposals[: self.max_branch_per_node]
+            scored_proposals.sort(key=lambda item: item[0])
+            proposals = [(c, st) for _, c, st in scored_proposals[: self.max_branch_per_node]]
             expansion_memo[memo_key] = proposals
             return proposals
 
@@ -1371,6 +1764,7 @@ __all__ = [
     "MOQOptimizationResult",
     "PackAllocation",
     "RETRO_STAR_TEMPLATE_DELTAS",
+    "RING_SYNTHESIS_RETRO_STAR_TEMPLATES",
     "RetroStarPlanner",
     "UNIMOLECULAR_RETRO_STAR_TEMPLATES",
     "optimize_discrete_pack_order",

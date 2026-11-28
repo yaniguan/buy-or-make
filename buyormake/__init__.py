@@ -1,5 +1,6 @@
 """buy-or-make: check whether candidate molecules are purchasable or makeable in N steps."""
 
+from .cost import purchasable_offers
 from .handoff import (
     ProcurementScheduleConstraint,
     build_labshift_release_map,
@@ -121,6 +122,7 @@ __all__ = [
     "parse_chembl_chemreps_records",
     "parse_coconut_records",
     "parse_paroutes_route_tree",
+    "purchasable_offers",
     "select_record_license",
     "to_procurement_constraint",
 ]

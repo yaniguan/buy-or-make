@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass, field
-from typing import Mapping, Optional
+from typing import Iterable, Mapping, Optional
 
 from .canonical import normalize_smiles
 from .schema import Offer, Quantity, RouteStep
@@ -25,6 +25,15 @@ EST_COST_METHOD = (
     "i.e., count * MW_leaf / MW_target); ignores solvents, reagents, catalysts, "
     "yield, labor, and purification"
 )
+
+
+def purchasable_offers(offers: Iterable[Offer]) -> list[Offer]:
+    """Return offers not explicitly flagged out of stock (`in_stock is not False`).
+
+    Offers with `in_stock=True` or `in_stock=None` (stock flag unpublished by free
+    catalogs) remain purchasable; only explicit `in_stock=False` is excluded.
+    """
+    return [off for off in offers if off.in_stock is not False]
 
 
 def offer_pack_grams(offer: Offer) -> Optional[float]:
@@ -401,7 +410,8 @@ def estimate_route_cost_bounds(
         if leaf_mol is None:
             skipped.append(f"{leaf_smi} (unparseable SMILES)")
             continue
-        offers = leaf_offers.get(leaf_mol.inchikey, [])
+        raw_offers = leaf_offers.get(leaf_mol.inchikey, [])
+        offers = purchasable_offers(raw_offers)
 
         # Molar equivalents per mole of target under (1) primary params, (2) ideal 100% lower bound, (3) realistic yield
         primary_equiv = sum(stoich_excess / (default_step_yield**d) for d in occ_depths)
@@ -444,7 +454,9 @@ def estimate_route_cost_bounds(
             outlay_leaves += 1
 
         if not ppg_candidates:
-            if max_pack_g is not None and any(
+            if raw_offers and not offers:
+                skipped.append(f"{leaf_smi} (all listed offers flagged out of stock)")
+            elif max_pack_g is not None and any(
                 offer_price_per_gram(off, currency=currency) is not None for off in offers
             ):
                 skipped.append(
@@ -477,6 +489,7 @@ def estimate_route_cost_bounds(
 
     complete = priced_leaves == total_unique_leaves
     outlay_complete = outlay_leaves == total_unique_leaves
+    per_g_unit = f"{currency}/g"
     scale_note = (
         f"per 1 g target; step_yield={default_step_yield:g}, stoich_excess={stoich_excess:g}"
         if (default_step_yield < 1.0 or stoich_excess != 1.0)
@@ -486,19 +499,19 @@ def estimate_route_cost_bounds(
 
     est_q = Quantity(
         value=round(total_primary, 4),
-        unit=currency,
-        raw_unit_str=f"{round(total_primary, 4)} {currency} ({suffix})",
+        unit=per_g_unit,
+        raw_unit_str=f"{round(total_primary, 4)} {per_g_unit} ({suffix})",
     )
     lower_q = Quantity(
         value=round(total_lower, 4),
-        unit=currency,
-        raw_unit_str=f"{round(total_lower, 4)} {currency} (100%-yield lower bound; per 1 g target)",
+        unit=per_g_unit,
+        raw_unit_str=f"{round(total_lower, 4)} {per_g_unit} (100%-yield lower bound; per 1 g target)",
     )
     yield_q = Quantity(
         value=round(total_yield_adj, 4),
-        unit=currency,
+        unit=per_g_unit,
         raw_unit_str=(
-            f"{round(total_yield_adj, 4)} {currency} "
+            f"{round(total_yield_adj, 4)} {per_g_unit} "
             f"(depth-compounded yield={eff_real_yield:g}, excess={eff_real_excess:g}; per 1 g target)"
         ),
     )

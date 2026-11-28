@@ -103,18 +103,17 @@ for r in ranked:
 af_rec = records[0].to_assayfold_record()
 release_minutes = build_labshift_release_map(records)
 
-# Co-scientist proposal filter (unit-checked per-gram budget + optional completeness enforcement)
+# Co-scientist proposal filter (strict-null USD/g budget gate by default; pass require_complete_cost=False to opt out)
 summary = filter_proposals(
     candidates,
     max_steps=2,
     budget=25.0,
     budget_currency="USD",
-    require_complete_cost=False,
 )
 print("kept:", len(summary.kept), "over_budget:", len(summary.over_budget))
 ```
 
-Ranking order: `buyable` (`USD/g` ascending, then other units grouped by unit, then `null` price) < `makeable` (fewer steps, complete `USD` cost before other currencies before partial cost before `null`) < `unknown` < `invalid`.
+Ranking order: `buyable` (`USD/g` ascending, then other units grouped by unit, then `null` price) < `makeable` (fewer steps, complete `USD/g` cost before other currencies before partial cost before `null`) < `unknown` < `invalid`.
 
 ## 15-Repository Auto-Lab Wire Contract (`autolab-wire/v1`)
 
@@ -134,9 +133,9 @@ All models in [`buyormake/schema.py`](buyormake/schema.py) use Pydantic v2 (`ext
 
 - `Source`: evaluated dataset/API metadata, `license` + explicit `spdx_license` (SPDX ID or `LicenseRef-Custom-Terms`), `license_evidence`, `license_quote`, ISO `license_checked` (`YYYY-MM-DD`), `license_check_method` (`"direct" | "indirect"`), `commercial_use_ok`, `redistribution_ok`, `status`.
 - `Offer`: `inchikey`, `vendor`, `catalog_id`, `pack_size` (`Quantity`), `purity`, `price` (`float | null`), `currency` (`str | null`), `price_basis` (`"listed_catalog" | "unknown"`), `lead_time_days`, `in_stock`, `source_id`, `source_url`, `fetched_utc`, `license`.
-- `Route` / `RouteStep`: `target_inchikey`, `n_steps`, `steps`, `leaves`, `leaves_purchasable`, `method`, `score`, `est_cost` (`Quantity | null`), `est_cost_method`, `est_cost_complete`.
+- `Route` / `RouteStep`: `target_inchikey`, `n_steps`, `tree_depth`, `steps`, `leaves`, `leaves_purchasable`, `method`, `score`, `est_cost` (`Quantity | null`, per `1 g` target in `<currency>/g`), `est_cost_yield_adjusted` (`Quantity | null`, per `1 g` target in `<currency>/g`), `min_outlay_cost` (`Quantity | null`, discrete pack MOQ cash outlay for the full `target_scale_g` order in `<currency>`), `est_cost_method`, `est_cost_complete`.
 - `AvailabilityRecord`: `molecule`, `offers`, `routes`, `sa_scores` (`sascore`, `scscore`, `rascore`), `origin`, `provenance` (propagating target, route-step, and leaf sources), `licenses`, `schema_version`, deterministic `record_hash`, and `.to_assayfold_record()`.
-- `RankResult`: `candidate`, `name`, `canonical_smiles`, `inchikey`, `status` (`buyable | makeable | unknown | invalid`), `n_steps`, `best_price`, `est_cost`, `cost_complete`, `sa_scores`, `reasons`, `evidence`.
+- `RankResult`: `candidate`, `name`, `canonical_smiles`, `inchikey`, `status` (`buyable | makeable | unknown | invalid`), `n_steps`, `best_price`, `est_cost`, `est_cost_yield_adjusted`, `min_outlay_cost`, `target_scale_g`, `cost_complete`, `all_offers_out_of_stock`, `sa_scores`, `reasons`, `evidence`.
 
 Regenerate JSON Schemas with:
 
@@ -175,34 +174,36 @@ Note on ZINC check: `wiki.docking.org` dropped TLS connections from the test hos
 ## Multi-Step Retrosynthesis & Single-Step Benchmark (`PaRoutes 2.0`, `SynPlanner`, `USPTO-50K`)
 
 <!-- BENCHMARK_TABLE_START -->
-Measured offline on CPU (`Python 3.11.15`, `RDKit 2026.03.4`, seed `20261127`) via [`scripts/benchmark_retrosynthesis.py`](scripts/benchmark_retrosynthesis.py) -> [`results/retrosynthesis_benchmark.json`](results/retrosynthesis_benchmark.json) over **240 stratified multi-step targets** (`PaRoutes 2.0 n1` `n=80`, `PaRoutes 2.0 n5` `n=80`, `SynPlanner` SAscore-stratified `n=80`) plus **500 held-out `Syntheseus USPTO-50K` test reactions** (`raw_test.csv` strictly excluded from SQLite reaction indexing):
+Measured offline on CPU (`Python 3.11.15`, `RDKit 2026.03.4`, seed `20261127`) via [`scripts/benchmark_retrosynthesis.py`](scripts/benchmark_retrosynthesis.py) -> [`results/retrosynthesis_benchmark.json`](results/retrosynthesis_benchmark.json) over **240 stratified multi-step targets** (`PaRoutes 2.0 n1` `n=80`, `PaRoutes 2.0 n5` `n=80`, `SynPlanner` SAscore-stratified `n=80`) plus **500 held-out `Syntheseus USPTO-50K` test reactions** (`raw_test.csv` strictly excluded). **Split & target-exclusion hygiene**: the headline leakage-free reaction index (`106,599` reactions across `19,840` non-target `PaRoutes` trees + `USPTO-50K` train+val) excludes all `160` sampled `PaRoutes` target trees **and** any reaction whose product `InChIKey` or 14-char connectivity block matches any of the `240` evaluated targets (`all_target_product_inchikey_overlap = 0`):
 
 #### Overall & Dataset-Stratified Multi-Step Solve Rates (`n = 240`)
 
-| Planner / Configuration | Overall Solve % | `PaRoutes n1` | `PaRoutes n5` | `SynPlanner` | Leaf Stock Completeness | Median Search Time |
-|---|---:|---:|---:|---:|---:|---:|
-| 1. Stock-only lookup (`max_steps=0`) | 0.0% (0/240) | 0.0% | 0.0% | 0.0% | 0.0% (solved: 100.0%) | 1.38 ms |
-| 2. 1-step lookup + 2-step greedy SMARTS (`17` templates) | 2.1% (5/240) | 2.5% | 0.0% | 3.8% | 42.8% (solved: 100.0%) | 29.63 ms |
-| 3a. `Retro*` AND-OR search (`max_steps=4`, `PaRoutes`+`USPTO-50K`+`44` SMARTS) | 57.1% (137/240) | 80.0% | 83.8% | 7.5% | 70.9% (solved: 100.0%) | 176.06 ms |
-| 3b. `Retro*` AND-OR search (`max_steps=5`, `PaRoutes`+`USPTO-50K`+`44` SMARTS) | 69.2% (166/240) | 100.0% | 100.0% | 7.5% | 77.9% (solved: 100.0%) | 178.66 ms |
-| 3c. `Retro*` zero-target-route ablation (`max_steps=5`, `USPTO-50K`+`44` SMARTS only) | 7.1% (17/240) | 6.2% | 7.5% | 7.5% | 35.4% (solved: 100.0%) | 105.54 ms |
+| Planner / Configuration | Target Routes Indexed? | Overall Solve % | `PaRoutes n1` | `PaRoutes n5` | `SynPlanner` | Leaf Stock Completeness | Median Search Time |
+|---|:---:|---:|---:|---:|---:|---:|---:|
+| 1. Stock-only lookup (`max_steps=0`) | **No (0 overlap)** | 0.0% (0/240) | 0.0% | 0.0% | 0.0% | 0.0% (solved: 100.0%) | 1.07 ms |
+| 2. 1-step held-out lookup + 2-step greedy SMARTS (`17` templates, leakage-free) | **No (0 overlap)** | 2.1% (5/240) | 2.5% | 0.0% | 3.8% | 34.4% (solved: 100.0%) | 18.08 ms |
+| 3a. Leakage-free `Retro*` (`max_steps=4`, held-out `PaRoutes` + `USPTO-50K` + `100` SMARTS) | **No (0 overlap)** | 27.9% (67/240) | 31.2% | 41.2% | 11.2% | 49.0% (solved: 100.0%) | 294.35 ms |
+| 3b. **Headline — Leakage-free `Retro*`** (`max_steps=5`, held-out `PaRoutes` + `USPTO-50K` + `100` SMARTS) | **No (0 overlap)** | 30.0% (72/240) | 35.0% | 43.8% | 11.2% | 50.4% (solved: 100.0%) | 322.37 ms |
+| 3c. Strict zero-`PaRoutes` `Retro*` (`max_steps=5`, `USPTO-50K` train+val + `100` SMARTS only) | **No (0 overlap)** | 24.6% (59/240) | 26.2% | 36.2% | 11.2% | 47.3% (solved: 100.0%) | 326.20 ms |
+| 4. *Reference-route retrieval upper bound* (`max_steps=5`, target's own `PaRoutes` route indexed — NOT headline) | Yes (upper bound) | 70.4% (169/240) | 100.0% | 100.0% | 11.2% | 78.8% (solved: 100.0%) | 340.62 ms |
 
 #### Solve Rate Stratified by `PaRoutes 2.0` Reference Route Depth & `SAscore` Band
 
 | Planner | Depth 2 | Depth 3 | Depth 4 | Depth 5 | Convergent Subset | `SA [1.5,2.5)` | `SA [2.5,3.5)` | `SA [3.5,4.5)` | `SA [4.5,10]` |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
 | 1. Stock-only lookup (`max_steps=0`) | 0.0% | 0.0% | 0.0% | 0.0% | 0.0% | 0.0% | 0.0% | 0.0% | 0.0% |
-| 2. 1-step lookup + 2-step greedy SMARTS (`17` templates) | 0.0% | 5.0% | 0.0% | 0.0% | 0.0% | 4.6% | 0.9% | 0.0% | 4.5% |
-| 3a. `Retro*` AND-OR search (`max_steps=4`, `PaRoutes`+`USPTO-50K`+`44` SMARTS) | 100.0% | 100.0% | 100.0% | 27.5% | 70.0% | 66.1% | 66.1% | 39.5% | 13.6% |
-| 3b. `Retro*` AND-OR search (`max_steps=5`, `PaRoutes`+`USPTO-50K`+`44` SMARTS) | 100.0% | 100.0% | 100.0% | 100.0% | 100.0% | 76.9% | 82.6% | 47.4% | 13.6% |
-| 3c. `Retro*` zero-target-route ablation (`max_steps=5`, `USPTO-50K`+`44` SMARTS only) | 7.5% | 12.5% | 0.0% | 7.5% | 20.0% | 16.9% | 3.5% | 0.0% | 9.1% |
+| 2. 1-step held-out lookup + 2-step greedy SMARTS (`17` templates, leakage-free) | 0.0% | 5.0% | 0.0% | 0.0% | 0.0% | 4.6% | 0.9% | 0.0% | 4.5% |
+| 3a. Leakage-free `Retro*` (`max_steps=4`, held-out `PaRoutes` + `USPTO-50K` + `100` SMARTS) | 45.0% | 45.0% | 27.5% | 27.5% | 40.0% | 46.2% | 26.1% | 13.2% | 9.1% |
+| 3b. **Headline — Leakage-free `Retro*`** (`max_steps=5`, held-out `PaRoutes` + `USPTO-50K` + `100` SMARTS) | 47.5% | 47.5% | 27.5% | 35.0% | 50.0% | 49.2% | 28.7% | 13.2% | 9.1% |
+| 3c. Strict zero-`PaRoutes` `Retro*` (`max_steps=5`, `USPTO-50K` train+val + `100` SMARTS only) | 47.5% | 32.5% | 20.0% | 25.0% | 30.0% | 41.5% | 23.5% | 7.9% | 9.1% |
+| 4. *Reference-route retrieval upper bound* (`max_steps=5`, target's own `PaRoutes` route indexed — NOT headline) | 100.0% | 100.0% | 100.0% | 100.0% | 100.0% | 80.0% | 83.5% | 47.4% | 13.6% |
 
 #### Held-Out `Syntheseus USPTO-50K` Single-Step Exact Reactant-Set Accuracy (`n = 500`)
 
 | Single-Step Disconnection Engine | Top-1 | Top-3 | Top-5 | Top-10 | Median Time |
 |---|---:|---:|---:|---:|---:|
-| `USPTO-50K` train+val lookup + `17` core SMARTS | 11.4% | 16.0% | 16.6% | 16.6% | 6.04 ms |
-| `USPTO-50K` train+val lookup + `44` `Retro*` SMARTS | 18.2% | 34.6% | 40.0% | 43.0% | 17.82 ms |
+| `USPTO-50K` train+val lookup + `17` core SMARTS | 11.4% | 16.0% | 16.6% | 16.6% | 5.61 ms |
+| `USPTO-50K` train+val lookup + `100` `Retro*` SMARTS | 17.6% | 36.6% | 44.6% | 49.4% | 25.75 ms |
 
 #### Verified Input Dataset SHA-256 Digests
 
@@ -272,10 +273,12 @@ Full candidate-by-candidate table is saved in [`examples/demo_output.md`](exampl
 - **Not purchasing advice.** Catalog prices change frequently and vary by region, currency, purity, pack size, institutional discounts, and account terms. A publicly listed price is not a binding quote.
 - **PubChem vendor lists are capped at 25 per molecule** in the default backend (`max_offers=25`). Online cache entries default to a 30-day TTL (`--cache-max-age-days`, bypassable via `--refresh-cache`), while `--offline` uses cached entries without expiration. Transient HTTP `5xx`/`429`/timeout errors are retried and never cached as negative results.
 - **Missing prices stay `null`.** Free public sources (PubChem Chemical Vendors, eMolecules free, Mcule free, ZINC, Enamine Open Structure Data) do not publish prices. Unless you supply a local offer file with real `listed_catalog` prices, `best_price` and `est_cost` remain `null`.
-- **Route cost is a rough lower bound.** When leaf prices are supplied, `est_cost` sums `cheapest_USD_per_g * count * (MW_leaf / MW_target)` per 1 g target. It ignores solvents, reagents, catalysts, reaction yield, purification, analytical QC, and labor. If any leaf lacks a price, `cost_complete` is `false`. Leaves left out of the sum (unparseable SMILES or no listed USD/g price) are listed in the route's `est_cost_method` and in the `reasons` of a makeable result. For buyable molecules `est_cost` is `null` and `cost_complete` is `false`; the listed price is in `best_price`.
+- **Explicitly out-of-stock listings do not make a molecule buyable or schedulable.** Offers with `in_stock=False` (`purchasable_offers(offers) == []`) never qualify a candidate as `buyable` or a retrosynthetic leaf as purchasable (`leaves_purchasable=False`). When a molecule has catalog offers that are all `in_stock=False`, `evaluate_candidates` retains the offers and `best_price` as evidence, sets `status="unknown"` and `all_offers_out_of_stock=True` with a reason naming the out-of-stock vendors, and `to_procurement_constraint` sets `schedulable=False` and `release_time_minutes=None` (omitting the molecule from `build_labshift_release_map`). Offers with `in_stock=None` (free registries that publish no stock flag) remain purchasable as before.
+- **Cost field bases (`<currency>/g` per-gram vs. `<currency>` whole-order cash outlay).** On `Route` and `RankResult`, `best_price` (when mass `pack_size` is known), `est_cost`, `lower_bound_cost`, and `est_cost_yield_adjusted` are intensive **per-1-gram** quantities labelled `<currency>/g` (e.g. `USD/g`, invariant to `target_scale_g`), whereas `min_outlay_cost` is an extensive **whole-order discrete pack cash outlay** for `target_scale_g` grams labelled `<currency>` (e.g. `USD`). When `enforce_moq_outlay=True` and no explicit `max_outlay_budget` is passed, `filter_decisions_from_ranked` derives the cash-outlay limit as `budget * target_scale_g` rather than reusing the per-gram `budget` directly.
+- **Route cost is a rough lower bound.** When leaf prices are supplied, `est_cost` sums `cheapest_USD_per_g * count * (MW_leaf / MW_target)` per 1 g target (`unit="USD/g"`). It ignores solvents, reagents, catalysts, reaction yield, purification, analytical QC, and labor. If any leaf lacks a price, `cost_complete` is `false`. Leaves left out of the sum (unparseable SMILES, out of stock, or no listed USD/g price) are listed in the route's `est_cost_method` and in the `reasons` of a makeable result. For buyable molecules `est_cost` is `null` and `cost_complete` is `false`; the listed price is in `best_price`.
 - **`est_cost` for makeable molecules is the cost of a found route, not the minimum-cost route.** The template search is not exhaustive: it carries at most 6 first-step disconnections into a second step, tries at most 6 second-step disconnections for each, and stops expanding a first step once one second step reaches purchasable leaves. The reported route is the best of those enumerated (fewest steps, then cost); a cheaper route may exist.
-- **Prices in different currencies or pack sizes are never compared.** `best_price` is the cheapest per-gram price in `USD/g` when mass pack sizes are known; otherwise raw pack prices are compared only when all offers share one pack size, and non-USD offers only when they all use a single currency. In cross-molecule ranking and `filter_proposals(budget=...)`, `USD/g` offers are never numerically interleaved with raw per-pack `USD` or non-USD offers, and `--require-complete-cost` rejects unpriced or incomplete-cost candidates under strict budgets.
-- **Template fallback is heuristic.** The 17 built-in RDKit SMARTS disconnections (15 acyclic `!@` bimolecular templates + 2 monocyclic `@` ring-openings, max 2 steps, verified for exact heavy-atom conservation) ignore stereochemistry, protecting groups, regioselectivity, chemoselectivity, and reaction conditions.
+- **Prices in different currencies or pack sizes are never compared, and active budgets reject unpriced candidates by default.** `best_price` is the cheapest per-gram price in `USD/g` when mass pack sizes are known; otherwise raw pack prices are compared only when all offers share one pack size, and non-USD offers only when they all use a single currency. In cross-molecule ranking and `filter_proposals(budget=...)`, `USD/g` offers and `USD/g` route costs are never numerically interleaved with raw per-pack `USD` or non-USD offers (`price_status="incompatible_unit"`). Whenever a numeric `budget` (or `max_outlay_budget`) is active, `require_complete_cost` defaults to `True` (matching `BuyOrMakeLean.unpriced_never_passes_budget`; pass `require_complete_cost=False` or `--allow-incomplete-cost` to opt out).
+- **Template fallback is heuristic.** The 17 core RDKit SMARTS disconnections (`routes.py`, max 2 steps) and 100 extended medicinal-chemistry `Retro*` SMARTS templates (`retro_star.py`, verified for exact heavy-atom conservation and chemoselectivity guards) do not replace experimental validation of reaction conditions or stereocontrol.
 - **SA/SC scores are heuristics**, not synthesis guarantees.
 - **`"unknown"` does not mean impossible.** It only means no stock offer or complete route within `max_steps` was found in the configured backends.
 

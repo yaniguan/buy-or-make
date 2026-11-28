@@ -114,8 +114,16 @@ def _add_eval_arguments(p: argparse.ArgumentParser) -> None:
     )
     p.add_argument(
         "--require-complete-cost",
+        dest="require_complete_cost",
         action="store_true",
-        help="Reject unpriced buyables and incomplete-cost routes when --budget is set.",
+        default=None,
+        help="Reject unpriced buyables and incomplete-cost routes when --budget is set (default when --budget is active).",
+    )
+    p.add_argument(
+        "--allow-incomplete-cost",
+        dest="require_complete_cost",
+        action="store_false",
+        help="Opt out of strict null/incomplete cost rejection when --budget is set.",
     )
     p.add_argument(
         "--stereo-relaxed",
@@ -129,10 +137,21 @@ def _add_eval_arguments(p: argparse.ArgumentParser) -> None:
         help="Assumed fractional yield per reaction step in (0, 1] for route cost compounding (default: 1.0).",
     )
     p.add_argument(
+        "--target-scale-g",
+        type=float,
+        default=1.0,
+        help="Target synthesis/procurement scale in grams for MOQ outlay calculations (default: 1.0).",
+    )
+    p.add_argument(
         "--max-outlay-budget",
         type=float,
         default=None,
         help="Optional discrete pack MOQ cash-outlay ceiling in budget currency.",
+    )
+    p.add_argument(
+        "--enforce-moq-outlay",
+        action="store_true",
+        help="Enforce discrete pack MOQ cash-outlay gate (derived as budget * target_scale_g when --max-outlay-budget is unset).",
     )
     p.add_argument("--json", action="store_true", dest="as_json", help="Output JSON.")
 
@@ -199,6 +218,7 @@ def main(argv: Optional[list[str]] = None) -> int:
             reaction_db_path=args.reaction_db,
             stereo_relaxed=args.stereo_relaxed,
             default_step_yield=args.step_yield,
+            target_scale_g=args.target_scale_g,
             currency=args.budget_currency,
         )
         if args.records_out is not None:
@@ -216,6 +236,8 @@ def main(argv: Optional[list[str]] = None) -> int:
                 budget_currency=args.budget_currency,
                 require_complete_cost=args.require_complete_cost,
                 max_outlay_budget=args.max_outlay_budget,
+                enforce_moq_outlay=args.enforce_moq_outlay,
+                target_scale_g=args.target_scale_g,
             )
             if args.as_json:
                 print(json.dumps(summary.model_dump(mode="json"), indent=2))

@@ -170,6 +170,12 @@
   },
   "additionalProperties": false,
   "properties": {
+    "all_offers_out_of_stock": {
+      "default": false,
+      "description": "True when >=1 catalog offer matched the molecule but every offer is explicitly flagged in_stock=False.",
+      "title": "All Offers Out Of Stock",
+      "type": "boolean"
+    },
     "best_price": {
       "anyOf": [
         {
@@ -179,7 +185,8 @@
           "type": "null"
         }
       ],
-      "default": null
+      "default": null,
+      "description": "Cheapest listed catalog price (normalized to '<currency>/g' when mass pack_size is known; retained as evidence even when all_offers_out_of_stock=True)."
     },
     "candidate": {
       "title": "Candidate",
@@ -224,7 +231,8 @@
           "type": "null"
         }
       ],
-      "default": null
+      "default": null,
+      "description": "Estimated stoichiometric leaf-only route cost per 1 g of target in '<currency>/g' (e.g. 'USD/g'); None for buyable, unknown, or invalid candidates."
     },
     "est_cost_yield_adjusted": {
       "anyOf": [
@@ -235,7 +243,8 @@
           "type": "null"
         }
       ],
-      "default": null
+      "default": null,
+      "description": "Step-depth yield-compounded leaf-only route cost per 1 g of target in '<currency>/g'."
     },
     "evidence": {
       "items": {
@@ -295,7 +304,8 @@
           "type": "null"
         }
       ],
-      "default": null
+      "default": null,
+      "description": "Minimum discrete pack MOQ cash outlay for the full target_scale_g order in absolute '<currency>' (e.g. 'USD')."
     },
     "moq_pack_g": {
       "anyOf": [
@@ -379,6 +389,12 @@
       },
       "title": "Stereoisomer Inchikeys In Stock",
       "type": "array"
+    },
+    "target_scale_g": {
+      "default": 1.0,
+      "description": "Target procurement or synthesis scale in grams used for min_outlay_cost.",
+      "title": "Target Scale G",
+      "type": "number"
     }
   },
   "required": [
