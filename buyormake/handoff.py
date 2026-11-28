@@ -13,6 +13,7 @@ from .cost import (
     cheapest_offer_for_target,
     estimate_route_cost_bounds,
     min_outlay_for_offers,
+    purchasable_offers,
 )
 from .retro_star import RETRO_STAR_TEMPLATE_DELTAS
 from .routes import RETRO_TEMPLATE_DELTAS
@@ -93,13 +94,10 @@ def _min_offer_lead_days(offers: Iterable[Offer]) -> Optional[int]:
     """Return shortest reported lead_time_days among offers not explicitly out of stock."""
     in_stock_leads = [
         off.lead_time_days
-        for off in offers
-        if off.lead_time_days is not None and off.in_stock is not False
+        for off in purchasable_offers(offers)
+        if off.lead_time_days is not None
     ]
-    if in_stock_leads:
-        return min(in_stock_leads)
-    any_leads = [off.lead_time_days for off in offers if off.lead_time_days is not None]
-    return min(any_leads) if any_leads else None
+    return min(in_stock_leads) if in_stock_leads else None
 
 
 def build_precursor_attribution_basis(
@@ -115,7 +113,7 @@ def build_precursor_attribution_basis(
         lnm = normalize_smiles(raw_leaf)
         can_smi = lnm.canonical_smiles if lnm is not None else raw_leaf
         ik = lnm.inchikey if lnm is not None else None
-        offs = list(leaf_offers_by_inchikey.get(ik, [])) if ik is not None else []
+        offs = purchasable_offers(leaf_offers_by_inchikey.get(ik, [])) if ik is not None else []
         _, sel_off, moq_g = min_outlay_for_offers(offs, currency=currency, required_grams=1.0)
         precursor_basis.append(
             {
@@ -196,16 +194,46 @@ def to_procurement_constraint(
     notes: list[str] = []
 
     if record.offers:
-        lead = _min_offer_lead_days(record.offers)
+        purchasable = purchasable_offers(record.offers)
+        if not purchasable:
+            oos_vendors = ", ".join(dict.fromkeys(o.vendor for o in record.offers))
+            notes.append(
+                f"unschedulable: all {len(record.offers)} catalog offer(s) ({oos_vendors}) "
+                "are explicitly flagged out of stock (in_stock=False)"
+            )
+            return ProcurementScheduleConstraint(
+                molecule_id=mol_id,
+                smiles=record.molecule.smiles,
+                inchikey=record.molecule.inchikey,
+                status="unknown",
+                schedulable=False,
+                lead_time_days=None,
+                n_synthesis_steps=0,
+                release_time_minutes=None,
+                lead_time_complete=False,
+                moq_pack_g=None,
+                selected_pack_size=None,
+                min_order_outlay_usd=None,
+                precursor_smiles=[],
+                est_cost=cheapest_offer_for_target(record.offers),
+                governing_license=gov_lic,
+                notes=notes,
+            )
+
+        lead = _min_offer_lead_days(purchasable)
         complete = lead is not None
         eff_lead = lead if lead is not None else default_lead_time_days
+        if len(purchasable) < len(record.offers):
+            notes.append(
+                f"ignored {len(record.offers) - len(purchasable)} offer(s) flagged out of stock"
+            )
         if not complete:
             notes.append(
                 f"vendor lead_time_days unlisted; using default_lead_time_days={default_lead_time_days}"
             )
         release_min = eff_lead * minutes_per_day
         outlay_q, sel_off, moq_g = min_outlay_for_offers(
-            record.offers, currency="USD", required_grams=target_scale_g
+            purchasable, currency="USD", required_grams=target_scale_g
         )
         eff_moq_g = moq_g if moq_g is not None else record.moq_pack_g
         sel_pack = sel_off.pack_size if (sel_off is not None and sel_off.pack_size is not None) else None
@@ -224,17 +252,30 @@ def to_procurement_constraint(
             selected_pack_size=sel_pack,
             min_order_outlay_usd=outlay_usd,
             precursor_smiles=[],
-            est_cost=cheapest_offer_for_target(record.offers),
+            est_cost=cheapest_offer_for_target(purchasable),
             governing_license=gov_lic,
             notes=notes,
         )
 
-    solved = [r for r in record.routes if r.leaves and all(r.leaves_purchasable)]
+    leaf_map: dict[str, list[Offer]] = dict(record.leaf_offers)
+    if leaf_offers_by_inchikey:
+        leaf_map.update(leaf_offers_by_inchikey)
+
+    def _route_leaves_in_stock(route: Route) -> bool:
+        if not route.leaves or not all(route.leaves_purchasable):
+            return False
+        for leaf_smi in route.leaves:
+            nm = normalize_smiles(leaf_smi)
+            if nm is None:
+                return False
+            raw_offs = leaf_map.get(nm.inchikey)
+            if raw_offs and not purchasable_offers(raw_offs):
+                return False
+        return True
+
+    solved = [r for r in record.routes if _route_leaves_in_stock(r)]
     if solved:
         best_route = solved[0]
-        leaf_map: dict[str, list[Offer]] = dict(record.leaf_offers)
-        if leaf_offers_by_inchikey:
-            leaf_map.update(leaf_offers_by_inchikey)
 
         leaf_leads: list[int] = []
         missing_lead_leaves: list[str] = []
@@ -242,7 +283,7 @@ def to_procurement_constraint(
         for leaf_smi in dict.fromkeys(best_route.leaves):
             nm = normalize_smiles(leaf_smi)
             precursors.append(nm.canonical_smiles if nm is not None else leaf_smi)
-            offs = leaf_map.get(nm.inchikey, []) if nm is not None else []
+            offs = purchasable_offers(leaf_map.get(nm.inchikey, [])) if nm is not None else []
             l_days = _min_offer_lead_days(offs)
             if l_days is None:
                 missing_lead_leaves.append(leaf_smi)
@@ -299,7 +340,14 @@ def to_procurement_constraint(
             notes=notes,
         )
 
-    notes.append("unschedulable: molecule is neither in stock nor makeable within search bounds")
+    if record.routes and any(
+        raw_offs and not purchasable_offers(raw_offs) for raw_offs in leaf_map.values()
+    ):
+        notes.append(
+            "unschedulable: candidate route leaf building block(s) are explicitly flagged out of stock (in_stock=False)"
+        )
+    else:
+        notes.append("unschedulable: molecule is neither in stock nor makeable within search bounds")
     return ProcurementScheduleConstraint(
         molecule_id=mol_id,
         smiles=record.molecule.smiles,

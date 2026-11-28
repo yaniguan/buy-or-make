@@ -18,6 +18,9 @@ from dataclasses import dataclass
 import numpy as np
 from rdkit import Chem
 
+from buyormake.rank import filter_decisions_from_ranked
+from buyormake.schema import Quantity, RankResult
+
 _METAL_SYMBOLS: frozenset[str] = frozenset(
     {
         "Li", "Be", "Na", "Mg", "Al", "K", "Ca", "Sc", "Ti", "V", "Cr", "Mn", "Fe", "Co",
@@ -201,7 +204,7 @@ def verify_option_guardrails(
     opt: GreenProcurementOption,
     budget_usd_per_g: float | None = None,
 ) -> tuple[bool, str | None]:
-    """Exact Python mirror of `BuyOrMakeLean.checkBuyOrMake` stoichiometry & budget checks."""
+    """Verify `BuyOrMakeLean.checkBuyOrMake` stoichiometry and delegate budget gating to `buyormake.rank`."""
     if (
         opt.lead_time_days < 0
         or opt.pmi_kg_per_kg < 1.0
@@ -220,14 +223,52 @@ def verify_option_guardrails(
         if _sum_atoms(opt.reactant_atoms) != opt.target_atoms.add(opt.leaving_delta):
             return False, "acyclic_atom_balanced_route"
 
-    if opt.usd_per_g is None or not opt.cost_complete or not opt.is_usd_per_gram:
+    if opt.usd_per_g is not None and (
+        not math.isfinite(opt.usd_per_g) or opt.usd_per_g < 0.0
+    ):
         return False, "strict_homogeneous_budget"
-    if opt.usd_per_g < 0.0 or not math.isfinite(opt.usd_per_g):
-        return False, "strict_homogeneous_budget"
-    if budget_usd_per_g is not None and opt.usd_per_g > budget_usd_per_g + 1e-12:
-        return False, "over_budget"
 
-    return True, None
+    qty = (
+        Quantity(
+            value=float(opt.usd_per_g),
+            unit="USD/g" if opt.is_usd_per_gram else "USD",
+        )
+        if opt.usd_per_g is not None
+        else None
+    )
+    if opt.is_direct_buy:
+        rr = RankResult(
+            candidate=opt.option_id,
+            status="buyable",
+            n_steps=0,
+            best_price=qty if opt.cost_complete else None,
+            cost_complete=False,
+        )
+    else:
+        rr = RankResult(
+            candidate=opt.option_id,
+            status="makeable",
+            n_steps=opt.steps,
+            est_cost=qty,
+            cost_complete=opt.cost_complete,
+        )
+
+    eff_budget = (
+        float(budget_usd_per_g)
+        if budget_usd_per_g is not None
+        else max(0.0, float(opt.usd_per_g or 0.0))
+    )
+    dec = filter_decisions_from_ranked(
+        [rr],
+        budget=eff_budget,
+        budget_currency="USD",
+        require_complete_cost=True,
+    ).decisions[0]
+    if dec.keep:
+        return True, None
+    if dec.over_budget:
+        return False, "over_budget"
+    return False, "strict_homogeneous_budget"
 
 
 def pareto_dominates(a: GreenProcurementOption, b: GreenProcurementOption) -> bool:

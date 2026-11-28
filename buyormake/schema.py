@@ -227,11 +227,29 @@ class Route(_Model):
     leaves_purchasable: list[bool]
     method: str
     score: Optional[float] = None
-    est_cost: Optional[Quantity] = None
+    est_cost: Optional[Quantity] = Field(
+        default=None,
+        description=(
+            "Estimated stoichiometric leaf-only cost per 1 g of target in '<currency>/g' "
+            "(e.g. 'USD/g'), independent of target_scale_g."
+        ),
+    )
     est_cost_method: str
     est_cost_complete: bool
-    est_cost_yield_adjusted: Optional[Quantity] = None
-    min_outlay_cost: Optional[Quantity] = None
+    est_cost_yield_adjusted: Optional[Quantity] = Field(
+        default=None,
+        description=(
+            "Step-depth yield-compounded leaf-only cost per 1 g of target in '<currency>/g' "
+            "(e.g. 'USD/g')."
+        ),
+    )
+    min_outlay_cost: Optional[Quantity] = Field(
+        default=None,
+        description=(
+            "Minimum discrete pack MOQ cash outlay for the full target_scale_g order in "
+            "absolute '<currency>' (e.g. 'USD')."
+        ),
+    )
     step_yield_assumed: float = 1.0
 
     @model_validator(mode="after")
@@ -368,13 +386,14 @@ class AvailabilityRecord(_Model):
         native_id: Optional[str] = None,
     ) -> AssayfoldRecord:
         """Convert this `AvailabilityRecord` into a sealed `assayfold` `Record(kind='molecule')`."""
-        from .cost import cheapest_offer_for_target
+        from .cost import cheapest_offer_for_target, purchasable_offers
 
         nid = str(native_id or self.molecule.inchikey or self.molecule.smiles)
+        purchasable = purchasable_offers(self.offers)
         props: dict[str, Quantity] = {
             "n_offers": Quantity(value=float(len(self.offers)), unit="1"),
         }
-        best_price = cheapest_offer_for_target(self.offers)
+        best_price = cheapest_offer_for_target(purchasable if purchasable else self.offers)
         if best_price is not None:
             props["best_price"] = best_price
         if self.lead_time_days is not None:
@@ -383,7 +402,7 @@ class AvailabilityRecord(_Model):
             props["moq_pack_g"] = Quantity(value=float(self.moq_pack_g), unit="g")
 
         solved = [r for r in self.routes if r.leaves and all(r.leaves_purchasable)]
-        if self.offers:
+        if purchasable:
             status_tag = "status:buyable"
             props["min_synthesis_steps"] = Quantity(value=0.0, unit="1")
         elif solved:
@@ -415,6 +434,8 @@ class AvailabilityRecord(_Model):
         governing_license = select_record_license(all_licenses, default="MIT")
 
         tags = [status_tag]
+        if self.offers and not purchasable:
+            tags.append("stock:all_offers_out_of_stock")
         if self.data_source != "unknown":
             tags.append(f"data_source:{self.data_source}")
         if self.inchikey_match != "none":
@@ -450,12 +471,46 @@ class RankResult(_Model):
     inchikey: Optional[str] = None
     status: Literal["buyable", "makeable", "unknown", "invalid"]
     n_steps: Optional[int] = None
-    best_price: Optional[Quantity] = None
-    est_cost: Optional[Quantity] = None
-    est_cost_yield_adjusted: Optional[Quantity] = None
-    min_outlay_cost: Optional[Quantity] = None
+    best_price: Optional[Quantity] = Field(
+        default=None,
+        description=(
+            "Cheapest listed catalog price (normalized to '<currency>/g' when mass pack_size "
+            "is known; retained as evidence even when all_offers_out_of_stock=True)."
+        ),
+    )
+    est_cost: Optional[Quantity] = Field(
+        default=None,
+        description=(
+            "Estimated stoichiometric leaf-only route cost per 1 g of target in '<currency>/g' "
+            "(e.g. 'USD/g'); None for buyable, unknown, or invalid candidates."
+        ),
+    )
+    est_cost_yield_adjusted: Optional[Quantity] = Field(
+        default=None,
+        description=(
+            "Step-depth yield-compounded leaf-only route cost per 1 g of target in '<currency>/g'."
+        ),
+    )
+    min_outlay_cost: Optional[Quantity] = Field(
+        default=None,
+        description=(
+            "Minimum discrete pack MOQ cash outlay for the full target_scale_g order in "
+            "absolute '<currency>' (e.g. 'USD')."
+        ),
+    )
+    target_scale_g: float = Field(
+        default=1.0,
+        description="Target procurement or synthesis scale in grams used for min_outlay_cost.",
+    )
     step_yield_assumed: float = 1.0
     cost_complete: bool = False
+    all_offers_out_of_stock: bool = Field(
+        default=False,
+        description=(
+            "True when >=1 catalog offer matched the molecule but every offer is explicitly "
+            "flagged in_stock=False."
+        ),
+    )
     lead_time_days: Optional[int] = None
     moq_pack_g: Optional[float] = None
     precursor_smiles: list[str] = Field(default_factory=list)
@@ -466,6 +521,16 @@ class RankResult(_Model):
     sa_scores: Optional[SAScores] = None
     reasons: list[str] = Field(default_factory=list)
     evidence: list[str] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def _validate_rank_result(self) -> "RankResult":
+        if (
+            isinstance(self.target_scale_g, bool)
+            or not math.isfinite(self.target_scale_g)
+            or self.target_scale_g <= 0.0
+        ):
+            raise ValueError("RankResult.target_scale_g must be a finite number > 0")
+        return self
 
 
 PriceStatusLiteral = Literal[

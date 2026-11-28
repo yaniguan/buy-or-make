@@ -34,8 +34,19 @@ def _heavy_counts(smi: str) -> Counter[str]:
 
 
 def test_all_extended_retro_star_templates_conserve_exact_element_deltas() -> None:
-    planner = RetroStarPlanner(max_branch_per_node=50)
-    assert len(EXTENDED_RETRO_STAR_TEMPLATES) >= 35
+    from rdkit.Chem import rdChemReactions
+
+    planner = RetroStarPlanner(max_branch_per_node=60)
+    assert len(EXTENDED_RETRO_STAR_TEMPLATES) == 100
+    seen_names: set[str] = set()
+    for tpl_name, smarts in EXTENDED_RETRO_STAR_TEMPLATES:
+        assert tpl_name not in seen_names, f"Duplicate template name: {tpl_name}"
+        seen_names.add(tpl_name)
+        assert tpl_name in RETRO_STAR_TEMPLATE_DELTAS, f"Missing delta for {tpl_name}"
+        rxn = rdChemReactions.ReactionFromSmarts(smarts)
+        assert rxn is not None, f"Failed to compile SMARTS for {tpl_name}"
+        assert rxn.GetNumReactantTemplates() == 1
+
     probes = [
         "Fc1ccc(-c2ccccn2)cc1",
         "CC(=O)Nc1ccc(-c2ccc(C(=O)OC)cc2)cc1",
@@ -46,6 +57,17 @@ def test_all_extended_retro_star_templates_conserve_exact_element_deltas() -> No
         "CCN(CCc1ccccc1)Cc1ccc(Cl)cc1",
         "CSCc1ccc(O)cc1",
         "O=C1CCCO1",
+        "O=C(Nc1ccc(F)cc1)N1CCOCC1",
+        "CCOC(=O)N1CCN(Cc2ccccc2)CC1",
+        "CCOC(=O)/C=C/c1ccc(OC)cc1",
+        "Cc1csc(Nc2ccccc2)n1",
+        "Cc1nc2ccccc2[nH]1",
+        "Cc1noc(-c2ccccc2)n1",
+        "c1ccc(-c2cn(Cc3ccccc3)nn2)cc1",
+        "OB(O)c1ccc(F)cc1",
+        "O=C(Cl)c1ccc(Cl)cc1",
+        "O=C=Nc1ccc(OC)cc1",
+        "CC1CCN(Cc2ccccc2)CC1",
     ]
     total_checked = 0
     for probe in probes:
@@ -54,11 +76,15 @@ def test_all_extended_retro_star_templates_conserve_exact_element_deltas() -> No
             assert cost_val > 0.0
             tpl_name = step.template_or_reference.split(":", 1)[0].strip()
             assert tpl_name in RETRO_STAR_TEMPLATE_DELTAS
-            expected = p_counts + Counter(RETRO_STAR_TEMPLATE_DELTAS[tpl_name])
+            expected = Counter(p_counts)
+            for sym, delta in RETRO_STAR_TEMPLATE_DELTAS[tpl_name].items():
+                expected[sym] += delta
+                if expected[sym] <= 0:
+                    del expected[sym]
             actual = sum((_heavy_counts(r) for r in step.reactants), Counter())
-            assert actual == expected, f"Delta mismatch on {tpl_name}: {actual} != {expected}"
+            assert actual == expected, f"Delta mismatch on {tpl_name}"
             total_checked += 1
-    assert total_checked >= 15
+    assert total_checked >= 35
 
 
 def test_retro_star_solves_convergent_and_deep_4step_routes_missed_by_greedy_2step(

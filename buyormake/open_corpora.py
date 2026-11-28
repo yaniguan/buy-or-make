@@ -65,6 +65,7 @@ CORPUS_ARTIFACTS: dict[str, CorpusArtifact] = {
         url="https://zenodo.org/api/records/7341155/files/stock_n1.txt/content",
         filename="stock_n1.txt",
         kind="stock",
+        expected_sha256="b8641e2028846d995953b30f7acd36e7521d0301159518d172497340a0bfb115",
         expected_md5="cfa7e97b0398c7e88e46c02ae5876edf",
         expected_size=368_802,
     ),
@@ -75,6 +76,7 @@ CORPUS_ARTIFACTS: dict[str, CorpusArtifact] = {
         url="https://zenodo.org/api/records/7341155/files/stock_n5.txt/content",
         filename="stock_n5.txt",
         kind="stock",
+        expected_sha256="199ec2d9fad0638c3ae53f2ea091dcd6bf9207a938b12ae1aa9429c37dd097af",
         expected_md5="741a804816fd0484a683b58846e142bb",
         expected_size=360_970,
     ),
@@ -85,6 +87,7 @@ CORPUS_ARTIFACTS: dict[str, CorpusArtifact] = {
         url="https://zenodo.org/api/records/7341155/files/ref_routes_n1.json/content",
         filename="ref_routes_n1.json",
         kind="routes",
+        expected_sha256="b818f2115ce10da51f84bf13f19dc2206863b1b074ef348017de258e9e1bff02",
         expected_md5="8f11ca81d6d184539fa4d2c5bde215af",
         expected_size=64_187_987,
     ),
@@ -95,6 +98,7 @@ CORPUS_ARTIFACTS: dict[str, CorpusArtifact] = {
         url="https://zenodo.org/api/records/7341155/files/ref_routes_n5.json/content",
         filename="ref_routes_n5.json",
         kind="routes",
+        expected_sha256="d878bec737d34a861b859912ac783f065c380f704f6d0087af4ea8ef667fa2bf",
         expected_md5="1da36cbada13175668c66546db6fd952",
         expected_size=82_120_928,
     ),
@@ -125,6 +129,8 @@ CORPUS_ARTIFACTS: dict[str, CorpusArtifact] = {
         url="https://ftp.ebi.ac.uk/pub/databases/chembl/SureChEMBL/bulk_data/latest/compounds.parquet",
         filename="compounds.parquet",
         kind="reference_compounds",
+        expected_sha256="41b557e91f8cf379e4990764df702324054353f2696fd8ebc1a547a6350ac235",
+        expected_md5="a3c4eaf376557e051783e29db23028e3",
         expected_size=4_281_834_894,
     ),
     "coconut_csv_lite_2026_11": CorpusArtifact(
@@ -134,6 +140,8 @@ CORPUS_ARTIFACTS: dict[str, CorpusArtifact] = {
         url="https://coconut.s3.uni-jena.de/prod/downloads/2026-11/coconut_csv_lite-11-2026.zip",
         filename="coconut_csv_lite-11-2026.zip",
         kind="reference_compounds",
+        expected_sha256="81f3edc1731f01da289fe6b84d162667863e331d52041a781565e1af2eb79939",
+        expected_md5="90ea2a941b0f69cb373fc90d03f83179",
         expected_size=199_108_039,
     ),
     "coconut_2_0_zenodo_csv": CorpusArtifact(
@@ -173,6 +181,7 @@ CORPUS_ARTIFACTS: dict[str, CorpusArtifact] = {
         url="https://ndownloader.figshare.com/files/45206101",
         filename="uspto50k.zip",
         kind="reactions",
+        expected_sha256="0f3871191a47f234ba5f5f48fca7fea08169718fe6d057c998a7588d8372f5c8",
         expected_md5="b4c1128ed1bf663f48ff17a1bc2e6517",
         expected_size=19_940_280,
     ),
@@ -193,6 +202,7 @@ CORPUS_ARTIFACTS: dict[str, CorpusArtifact] = {
         url="https://huggingface.co/Laboratoire-De-Chemoinformatique/SynPlanner/resolve/main/building_blocks/building_blocks_em_sa_ln.smi",
         filename="building_blocks_em_sa_ln.smi",
         kind="stock",
+        expected_sha256="53b6d5eec7b3c522e8499213b95f5884028ce73fd83e09e1e63b6ded97e5affb",
         expected_size=5_784_208,
     ),
     "synplanner_targets_sa_1_5_2_5": CorpusArtifact(
@@ -202,6 +212,7 @@ CORPUS_ARTIFACTS: dict[str, CorpusArtifact] = {
         url="https://huggingface.co/Laboratoire-De-Chemoinformatique/SynPlanner/resolve/main/benchmarks/sascore/targets_with_sascore_1.5_2.5.smi",
         filename="targets_with_sascore_1.5_2.5.smi",
         kind="targets",
+        expected_sha256="b3e7263bd803a2dbe694d0a8a8d7562971ab9fc6a1994d306104eec5fe7eca28",
         expected_size=4_361,
     ),
     "synplanner_targets_sa_2_5_3_5": CorpusArtifact(
@@ -211,6 +222,7 @@ CORPUS_ARTIFACTS: dict[str, CorpusArtifact] = {
         url="https://huggingface.co/Laboratoire-De-Chemoinformatique/SynPlanner/resolve/main/benchmarks/sascore/targets_with_sascore_2.5_3.5.smi",
         filename="targets_with_sascore_2.5_3.5.smi",
         kind="targets",
+        expected_sha256="68bc68a98549646e5509c2e46135f318517e4e96905575c9e38e30303160a61e",
         expected_size=4_875,
     ),
     "synplanner_targets_sa_3_5_4_5": CorpusArtifact(
@@ -220,6 +232,7 @@ CORPUS_ARTIFACTS: dict[str, CorpusArtifact] = {
         url="https://huggingface.co/Laboratoire-De-Chemoinformatique/SynPlanner/resolve/main/benchmarks/sascore/targets_with_sascore_3.5_4.5.smi",
         filename="targets_with_sascore_3.5_4.5.smi",
         kind="targets",
+        expected_sha256="d8125674587b9b2ecfcc268ace17adc8f1cf35c2281a001cbc9487d744d42856",
         expected_size=5_398,
     ),
     "synplanner_targets_sa_4_5_5_5": CorpusArtifact(
@@ -229,6 +242,7 @@ CORPUS_ARTIFACTS: dict[str, CorpusArtifact] = {
         url="https://huggingface.co/Laboratoire-De-Chemoinformatique/SynPlanner/resolve/main/benchmarks/sascore/targets_with_sascore_4.5_5.5.smi",
         filename="targets_with_sascore_4.5_5.5.smi",
         kind="targets",
+        expected_sha256="9b02a61ee21876b1977ac319d4305e9cfb201be531041953caceda517182516b",
         expected_size=6_087,
     ),
     "synplanner_uspto_standardized": CorpusArtifact(
